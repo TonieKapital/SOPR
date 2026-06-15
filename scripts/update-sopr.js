@@ -1,8 +1,3 @@
-/**
- * Skrypt automatycznie pobierający najnowszą wartość wskaźnika STH-SOPR ze strony CheckOnChain.
- * Wersja V7: Parser oparty na wyszukiwaniu tokenów i precyzyjnym dopasowaniu głębokości nawiasów.
- */
-
 const fs = require('fs');
 const path = require('path');
 
@@ -27,10 +22,7 @@ function extractArrayAt(html, startPos) {
         }
     }
     
-    if (endBracket !== -1) {
-        return html.substring(startBracket + 1, endBracket);
-    }
-    return null;
+    return endBracket !== -1 ? html.substring(startBracket + 1, endBracket) : null;
 }
 
 async function main() {
@@ -49,37 +41,32 @@ async function main() {
         
         const html = await response.text();
         console.log(`[LOG] Pomyślnie pobrano kod HTML (Długość dokumentu: ${html.length} znaków).`);
-
         console.log("[LOG] Skanowanie semantyczne w poszukiwaniu serii wartości (oś Y)...");
         
         let pos = 0;
         const discoveredY = [];
 
-        // KROK 1: Lokalizujemy wszystkie właściwości wykresu odpowiadające za oś Y
         while (pos < html.length) {
             let idx = html.indexOf('y', pos);
             if (idx === -1) break;
             
-            // Pobieramy kontekst wokół znaku 'y' (5 znaków przed, 20 po)
             let slice = html.substring(Math.max(0, idx - 5), Math.min(html.length, idx + 20));
             let cleanSlice = slice.replace(/[\s"'\\]/g, '');
             
-            // Sprawdzamy czy to deklaracja serii danych Plotly np. y: [ lub "y": [
             if (cleanSlice.includes('y:')) {
                 let content = extractArrayAt(html, idx);
-                if (content && content.length > 1000) { // Interesują nas tylko duże serie danych
+                if (content && content.length > 1000) {
                     discoveredY.push({ content, startPos: idx });
                 }
             }
             pos = idx + 1;
         }
 
-        console.log(`[LOG] Zlokalizowano ${discoveredY.length} czystych serii liczbowych. Filtrowanie wskaźnika STH-SOPR...`);
+        console.log(`[LOG] Zlokalizowano ${discoveredY.length} serii liczbowych. Filtrowanie wskaźnika STH-SOPR...`);
 
         let winningY = null;
         let soprValues = null;
 
-        // KROK 2: Analizujemy wartości serii, szukając profilu SOPR (średnia bliska 1.0)
         for (let yData of discoveredY) {
             let cleanRaw = yData.content.replace(/[\s\\"']/g, '');
             let items = cleanRaw.split(',');
@@ -100,7 +87,6 @@ async function main() {
             throw new Error("Nie znaleziono serii liczbowej odpowiadającej profilowi wskaźnika SOPR.");
         }
 
-        // KROK 3: Szukamy dopasowanej serii dat (oś X) w otoczeniu (okienko 10k znaków) zidentyfikowanego SOPR
         console.log("[LOG] Poszukiwanie powiązanej osi czasu (X)...");
         let searchStart = Math.max(0, winningY.startPos - 10000);
         let searchEnd = Math.min(html.length, winningY.startPos + 10000);
@@ -121,7 +107,6 @@ async function main() {
                 let xContent = extractArrayAt(html, absoluteXIdx);
                 if (xContent) {
                     let items = xContent.replace(/[\s\\"']/g, '').split(',').filter(i => i.length > 0);
-                    // Oś czasu musi mieć dokładnie tę samą długość co wskaźnik
                     if (items.length === soprValues.length) {
                         soprDates = items;
                         console.log(`[LOG] Sukces! Zsynchronizowano oś czasu (Liczba rekordów: ${soprDates.length})`);
@@ -136,7 +121,6 @@ async function main() {
             throw new Error("Błąd krytyczny: Nie udało się odnaleźć dopasowanej osi dat dla tego wykresu.");
         }
 
-        // KROK 4: Odwrócona pętla (Backward Scan) - bierzemy ostatni dzień pomijając przyszłe nulle (padding)
         let latestDate = null;
         let latestValue = null;
 
@@ -155,7 +139,6 @@ async function main() {
 
         console.log(`[SUCCESS] Najnowszy realny odczyt z rynku: Dzień = ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
 
-        // KROK 5: Zapis do bazy danych JSON
         let localDatabase = [];
         if (fs.existsSync(DATA_PATH)) {
             try {
@@ -185,4 +168,12 @@ async function main() {
         }
 
         fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Pl
+        console.log(`[SUCCESS] Plik bazy danych JSON został pomyślnie zapisany.`);
+
+    } catch (error) {
+        console.error("[CRITICAL ERROR]", error.message);
+        process.exit(1);
+    }
+}
+
+main();
