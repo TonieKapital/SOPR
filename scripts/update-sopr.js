@@ -1,6 +1,6 @@
 /**
  * Skrypt automatycznie pobierający najnowszą wartość wskaźnika STH-SOPR ze strony CheckOnChain.
- * Wersja V2: Pancerny parser z obsługą escaped JSON oraz detekcją blokad CDN/Cloudflare.
+ * Wersja V3: Elastyczny parser z uniwersalnym dopasowaniem tablic tekstowych (x/y) o dużej objętości.
  */
 
 const fs = require('fs');
@@ -15,86 +15,77 @@ async function main() {
         
         const response = await fetch(URL, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
             }
         });
         
         if (!response.ok) {
-            throw new Error(`Nie udało się pobrać strony. Status HTTP: ${response.status} ${response.statusText}`);
+            throw new Error(`Nie udało się pobrać strony. Status HTTP: ${response.status}`);
         }
         
         const html = await response.text();
         console.log(`[LOG] Pomyślnie pobrano kod HTML (Długość dokumentu: ${html.length} znaków).`);
 
-        // KROK 1: Sprawdzenie obecności systemów anty-botowych
-        if (html.includes("cloudflare") || html.includes("Just a moment...") || html.includes("challenge-platform")) {
-            console.error("[DIAGNOSTYKA] Pierwsze 300 znaków odebranej odpowiedzi:\\n", html.substring(0, 300));
-            throw new Error("Krytyczna blokada anty-botowa (Cloudflare). Serwer wykrył maszynę GitHub Actions i zablokował dostęp.");
-        }
-
-        // KROK 2: Wielowariantowe poszukiwanie struktur danych Plotly (Standardowe i Escaped)
-        let xMatches = [...html.matchAll(/(?:\\?"x\\?")\s*:\s*\\?\[([^\\\]]+)\\?\]/g)];
-        let yMatches = [...html.matchAll(/(?:\\?"y\\?")\s*:\s*\\?\[([^\\\]]+)\\?\]/g)];
+        // UNIWERSALNY REGEX: Szuka klucza x/y w cudzysłowach, apostrofach lub bez, a następnie przechwytuje zawartość nawiasu [ ]
+        // Zastosowanie [\s\S]*? pozwala na bezpieczne bezpieczne parsowanie wielolinijkowych struktur tekstowych
+        const xMatches = [...html.matchAll(/(?:"x"|'x'|\bx\b)\s*:\s*\[([\s\S]*?)\]/g)];
+        const yMatches = [...html.matchAll(/(?:"y"|'y'|\by\b)\s*:\s*\[([\s\S]*?)\]/g)];
 
         if (xMatches.length === 0 || yMatches.length === 0) {
-            console.error("[DIAGNOSTYKA] Parser nie odnalazł kluczy x/y. Pierwsze 400 znaków strony:\\n", html.substring(0, 400));
-            throw new Error("Nie odnaleziono tablic danych x lub y w strukturze Plotly w kodzie HTML.");
+            throw new Error("Krytyczny błąd: Parser nie dopasował żadnych tablic danych x/y w strukturze wykresu.");
         }
 
-        console.log(`[LOG] Wykryto ${xMatches.length} potencjalnych serii danych w kodzie źródłowym.`);
+        console.log(`[LOG] Wykryto ${xMatches.length} serii danych w kodzie źródłowym. Uruchamianie heurystyki...`);
 
-        // KROK 3: Heurystyka wyboru serii STH-SOPR (szukamy średniej wartości bliskiej 1.0)
         let selectedIndex = -1;
 
+        // Przeszukiwanie serii w celu zlokalizowania wskaźnika SOPR (wartości oscylujące wokół 1.0)
         for (let i = 0; i < xMatches.length; i++) {
             const rawY = yMatches[i] ? yMatches[i][1] : '';
-            // Czyszczenie znaków ucieczki, jeśli występują
-            const cleanY = rawY.replace(/\\/g, '');
+            // Czyszczenie spacji, cudzysłowów i ukośników dla poprawnej konwersji typów
+            const cleanY = rawY.replace(/[\s\\"']/g, '');
             const sampleValues = cleanY.split(',')
-                .slice(-15)
-                .map(v => parseFloat(v.trim()))
+                .slice(-20) // Analiza ostatnich 20 próbek rynkowych
+                .map(v => parseFloat(v))
                 .filter(v => !isNaN(v));
 
             if (sampleValues.length > 0) {
                 const avg = sampleValues.reduce((sum, val) => sum + val, 0) / sampleValues.length;
+                // SOPR krótkoterminowy porusza się w wąskim paśmie makro (0.5 do 2.0)
                 if (avg > 0.5 && avg < 2.0) {
                     selectedIndex = i;
-                    console.log(`[LOG] Dopasowano serię danych wskaźnika STH-SOPR na indeksie: ${i} (średnia próbki: ${avg.toFixed(4)})`);
+                    console.log(`[LOG] Sukces heurystyki! Dopasowano wskaźnik STH-SOPR na indeksie serii: ${i} (Średnia próbek: ${avg.toFixed(4)})`);
                     break;
                 }
             }
         }
 
         if (selectedIndex === -1) {
-            console.warn("[WARN] Heurystyka zawiodła. Wybieranie domyślnej serii o największej objętości danych.");
+            console.warn("[WARN] Heurystyka wartości zawiodła. Wybieranie serii o największej objętości punktów.");
             selectedIndex = 0;
         }
 
-        const rawX = xMatches[selectedIndex][1].replace(/\\/g, '');
-        const rawY = yMatches[selectedIndex][1].replace(/\\/g, '');
+        // Pobranie i ostateczne oczyszczenie wyekstrahowanych ciągów danych
+        const cleanX = xMatches[selectedIndex][1].replace(/[\s\\"']/g, '');
+        const cleanY = yMatches[selectedIndex][1].replace(/[\s\\"']/g, '');
 
-        const dates = rawX.split(',').map(d => d.replace(/["'\s]/g, ''));
-        const values = rawY.split(',').map(v => {
-            const trimmed = v.trim();
-            return trimmed === 'null' ? null : parseFloat(trimmed);
-        });
+        const dates = cleanX.split(',').filter(d => d.length > 0);
+        const values = cleanY.split(',').map(v => v === 'null' ? null : parseFloat(v));
 
-        if (dates.length === 0 || values.length === 0) {
-            throw new Error("Wyekstrahowane tablice danych są puste.");
+        if (dates.length === 0 || values.length === 0 || dates.length !== values.length) {
+            throw new Error(`Niezgodność struktur danych. Daty: ${dates.length}, Wartości: ${values.length}`);
         }
 
         const latestDate = dates[dates.length - 1];
         const latestValue = values[values.length - 1];
 
         if (!latestDate || latestValue === null || isNaN(latestValue)) {
-            throw new Error("Najnowszy punkt danych zawiera nieprawidłowe wartości.");
+            throw new Error("Wyciągnięty punkt końcowy zawiera uszkodzone dane.");
         }
 
-        console.log(`[SUCCESS] Pomyślnie sparsowano odczyt: ${latestDate} | Wartość = ${latestValue}`);
+        console.log(`[SUCCESS] Sparowano najnowszy odczyt: ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
 
-        // KROK 4: Zapis i aktualizacja bazy danych JSON
+        // Odczyt i aktualizacja lokalnego pliku JSON
         let localDatabase = [];
         if (fs.existsSync(DATA_PATH)) {
             try {
@@ -110,9 +101,9 @@ async function main() {
             if (localDatabase[existingIndex].value !== latestValue) {
                 localDatabase[existingIndex].value = latestValue;
                 localDatabase[existingIndex].updatedAt = new Date().toISOString();
-                console.log(`[LOG] Zaktualizowano wartość dla istniejącej daty ${latestDate}.`);
+                console.log(`[LOG] Zaktualizowano wartość dla daty ${latestDate}.`);
             } else {
-                console.log(`[LOG] Brak zmian dla dnia ${latestDate}.`);
+                console.log(`[LOG] Dane dla dnia ${latestDate} są aktualne. Brak zmian.`);
             }
         } else {
             localDatabase.push({
@@ -120,11 +111,11 @@ async function main() {
                 value: latestValue,
                 updatedAt: new Date().toISOString()
             });
-            console.log(`[LOG] Dodano nowy rekord historyczny dla daty: ${latestDate}`);
+            console.log(`[LOG] Zapisano nowy rekord dla daty: ${latestDate}`);
         }
 
         fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Plik bazy danych został zaktualizowany.`);
+        console.log(`[SUCCESS] Baza danych JSON została pomyślnie zaktualizowana.`);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
