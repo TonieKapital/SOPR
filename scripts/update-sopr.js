@@ -18,7 +18,7 @@ async function main() {
         console.log(`[LOG] Nawiązywanie połączenia z: ${URL}`);
         
         await page.goto(URL, { waitUntil: 'networkidle0', timeout: 60000 });
-        console.log(`[LOG] Strona załadowana. Wyciąganie i scalanie danych Plotly...`);
+        console.log(`[LOG] Strona załadowana. Izolowanie niezależnych śladów Plotly...`);
 
         const result = await page.evaluate(() => {
             let plotDiv = document.querySelector('.js-plotly-plot');
@@ -32,56 +32,59 @@ async function main() {
                 }
             }
 
-            if (!plotDiv || !plotDiv.data) return { error: "Brak wykresu Plotly." };
+            if (!plotDiv || !plotDiv.data) return { error: "Brak wykresu Plotly na stronie." };
 
             const traces = plotDiv.data;
+            let candidates = [];
 
-            // 1. Zabezpieczamy główną oś czasu z najdłuższej linii (np. Price)
-            let masterX = [];
-            traces.forEach(t => {
-                if (t.x && t.x.length > masterX.length) {
-                    masterX = t.x;
+            // Przeszukujemy wszystkie dostępne linie na wykresie
+            traces.forEach(trace => {
+                if (trace.name && trace.name.includes('STH-SOPR')) {
+                    const xArr = trace.x;
+                    const yArr = trace.y;
+                    
+                    if (xArr && yArr) {
+                        // Skanujemy każdą linię od jej własnego końca
+                        for (let i = yArr.length - 1; i >= 0; i--) {
+                            let y = yArr[i];
+                            // Ignorujemy wszelkie puste rekordy i "śmieci"
+                            if (y !== null && y !== 'null' && y !== undefined && y !== '') {
+                                let parsedY = parseFloat(y);
+                                if (!isNaN(parsedY)) {
+                                    let dateStr = String(xArr[i]);
+                                    let time = new Date(dateStr).getTime();
+                                    
+                                    if (!isNaN(time)) {
+                                        // Zapisujemy najnowszą znalezioną wartość z tej konkretnej linii
+                                        candidates.push({
+                                            date: dateStr.split('T')[0].split(' ')[0],
+                                            value: parsedY,
+                                            time: time
+                                        });
+                                        break; // Przerywamy pętlę dla tej linii, bo mamy już jej szczyt
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             });
 
-            // 2. Łapiemy obie części rozbitego wskaźnika STH-SOPR
-            const traceHigh = traces.find(t => t.name && t.name.includes('STH-SOPR > 1'));
-            const traceLow = traces.find(t => t.name && t.name.includes('STH-SOPR < 1'));
-
-            if (!masterX.length || (!traceHigh && !traceLow)) {
-                return { error: "Wykres nie zawiera pełnej osi dat lub śladów STH-SOPR." };
+            if (candidates.length > 0) {
+                // Sortujemy znalezione wyniki z różnych linii po czasie (od najnowszego)
+                candidates.sort((a, b) => b.time - a.time);
+                // Zwracamy absolutnie najświeższy punkt z całego wykresu
+                return { date: candidates[0].date, value: candidates[0].value };
             }
 
-            let latestDate = null;
-            let latestValue = null;
-
-            // 3. Odwrócona pętla - szukamy ostatniego dnia z fizyczną wartością
-            for (let i = masterX.length - 1; i >= 0; i--) {
-                let valHigh = traceHigh && traceHigh.y ? traceHigh.y[i] : null;
-                let valLow = traceLow && traceLow.y ? traceLow.y[i] : null;
-
-                let val = null;
-                // Wybieramy wartość z tej linii, która nie jest pusta w tym konkretnym dniu
-                if (valHigh !== null && valHigh !== undefined && !isNaN(valHigh)) val = valHigh;
-                else if (valLow !== null && valLow !== undefined && !isNaN(valLow)) val = valLow;
-
-                if (val !== null) {
-                    let dateStr = String(masterX[i]);
-                    latestDate = dateStr.split('T')[0].split(' ')[0]; // Zostawiamy YYYY-MM-DD
-                    latestValue = parseFloat(val);
-                    break;
-                }
-            }
-
-            if (latestDate) return { date: latestDate, value: latestValue };
-            return { error: "Nie znaleziono liczb w połączonych śladach SOPR." };
+            return { error: "Nie odnaleziono powiązanych punktów x/y w śladach STH-SOPR." };
         });
 
         if (result.error) {
             throw new Error(result.error);
         }
 
-        console.log(`[SUCCESS] Dane pobrane i scalone pomyślnie!`);
+        console.log(`[SUCCESS] Dane wyodrębnione i zsynchronizowane!`);
         console.log(`[SUCCESS] Najnowszy punkt: Dzień = ${result.date} | Wartość STH-SOPR = ${result.value}`);
 
         let localDatabase = [];
@@ -113,7 +116,7 @@ async function main() {
         }
 
         fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Baza danych JSON zaktualizowana.`);
+        console.log(`[SUCCESS] Baza danych JSON została zaktualizowana.`);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
