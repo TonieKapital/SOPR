@@ -20,93 +20,105 @@ async function main() {
         
         const html = await response.text();
         console.log(`[LOG] Pomyślnie pobrano kod HTML (Długość: ${html.length} znaków).`);
-        console.log("[LOG] Uruchamianie pancernego skanera najgłębszych tablic płaskich...");
-        
-        const flatArrays = [];
-        let pos = 0;
+        console.log("[LOG] Uruchamianie Globalnego Skanera Strumienia Tokenów...");
 
-        // Algorytm wyciągający wyłącznie najgłębsze, płaskie tablice (bez zagnieżdżeń)
-        while (true) {
-            let start = html.indexOf('[', pos);
-            if (start === -1) break;
-            
-            let nextEnd = html.indexOf(']', start);
-            if (nextEnd === -1) break;
-            
-            // Kluczowy krok: szukamy OSTATNIEGO otwarcia nawiasu przed znalezionym zamknięciem
-            let trueStart = html.lastIndexOf('[', nextEnd);
-            
-            if (trueStart !== -1) {
-                let content = html.substring(trueStart + 1, nextEnd);
-                // Interesują nas tylko długie serie danych rynkowych
-                if (content.length > 1000) {
-                    flatArrays.push(content);
+        // Rozbijamy cały dokument na płaskie elementy
+        const rawTokens = html.split(',');
+        console.log(`[LOG] Wygenerowano ${rawTokens.length} surowych tokenów tekstowych. Rozpoczynanie segmentacji cyklu...`);
+
+        let segments = [];
+        let currentType = null;
+        let currentSegment = [];
+
+        // KROK 1: Klasyfikacja i budowanie nieprzerwanych ciągów danych (Date / Number)
+        for (let rawToken of rawTokens) {
+            // Oczyszczamy token ze wszystkich znaków strukturalnych JavaScript/JSON
+            let token = rawToken.replace(/[\s"'\\\{\}\[\]]/g, '');
+            // Usuwamy ewentualne przypisania zmiennych typu x:, y:, name:
+            token = token.replace(/^[a-zA-Z0-9_]+:/, '');
+
+            let type = 'other';
+            if (/^\d{4}-\d{2}-\d{2}$/.test(token)) {
+                type = 'date';
+            } else if (token === 'null' || (!isNaN(parseFloat(token)) && isFinite(token))) {
+                type = 'number';
+            }
+
+            if (type === currentType) {
+                currentSegment.push(token);
+            } else {
+                if (currentSegment.length > 0) {
+                    segments.push({ type: currentType, data: currentSegment });
+                }
+                currentType = type;
+                currentSegment = [token];
+            }
+        }
+        if (currentSegment.length > 0) {
+            segments.push({ type: currentType, data: currentSegment });
+        }
+
+        // KROK 2: Filtrowanie i identyfikacja struktur rynkowych
+        const dateSegments = segments.filter(s => s.type === 'date' && s.data.length > 1000);
+        const numberSegments = segments.filter(s => s.type === 'number' && s.data.length > 1000);
+
+        console.log(`[LOG] Segmentacja zakończona. Wykryto długich serii dat: ${dateSegments.length}, serii liczb: ${numberSegments.length}`);
+
+        let soprSegment = null;
+
+        // Szukamy serii liczbowej, która idealnie odpowiada zachowaniu SOPR (średnia blisko 1.0)
+        for (let seg of numberSegments) {
+            let nums = seg.data.map(v => v === 'null' ? null : parseFloat(v)).filter(v => v !== null && !isNaN(v));
+            if (nums.length > 0) {
+                let avg = nums.reduce((sum, val) => sum + val, 0) / nums.length;
+                // STH-SOPR oscyluje stabilnie w kanale wokół wartości neutralnej 1.0
+                if (avg > 0.85 && avg < 1.15) {
+                    soprSegment = seg;
+                    console.log(`[LOG] Sukces! Zidentyfikowano nieprzerwany ciąg STH-SOPR. Długość: ${seg.data.length}, Średnia cyklu: ${avg.toFixed(4)}`);
+                    break;
                 }
             }
-            pos = nextEnd + 1;
         }
 
-        console.log(`[LOG] Wyodrębniono ${flatArrays.length} rzeczywistych serii danych. Uruchamianie klasyfikacji...`);
-
-        let btcDates = null;
-        let soprValues = null;
-
-        for (let rawContent of flatArrays) {
-            let clean = rawContent.replace(/[\s"'\\]/g, '');
-            let items = clean.split(',');
-            
-            if (items.length < 500) continue;
-
-            // Sprawdzenie czy to oś czasu (daty zawierające myślniki)
-            let isDateArray = items.slice(0, 20).some(item => item.includes('-') && item.length >= 8);
-            
-            if (isDateArray) {
-                if (!btcDates || items.length > btcDates.length) {
-                    btcDates = items;
-                }
-                continue;
-            }
-
-            // Sprawdzenie czy to seria numeryczna SOPR
-            let numbers = items.map(v => parseFloat(v)).filter(v => !isNaN(v));
-            if (numbers.length === 0) continue;
-
-            let avg = numbers.reduce((sum, val) => sum + val, 0) / numbers.length;
-
-            // Szeroki, bezpieczny filtr profilu: SOPR z definicji makro oscyluje wokół wartości 1.0
-            if (avg > 0.5 && avg < 2.0) {
-                soprValues = items.map(v => v === 'null' ? null : parseFloat(v));
-                console.log(`[LOG] Sukces! Zidentyfikowano linię STH-SOPR. Elementy: ${items.length}, Średnia cyklu: ${avg.toFixed(4)}`);
-            }
+        if (!soprSegment) {
+            throw new Error("Krytyczny błąd: Żaden strumień liczb nie spełnia kryteriów matematycznych wskaźnika STH-SOPR.");
         }
 
-        if (!soprValues || !btcDates) {
-            throw new Error("Algorytm klasyfikacji nie dopasował profilu matematycznego wskaźnika SOPR lub osi dat.");
+        // Dopasowanie osi czasu o identycznej długości
+        let matchingDateSeg = dateSegments.find(s => s.data.length === soprSegment.data.length);
+        if (!matchingDateSeg && dateSegments.length > 0) {
+            // Fallback do najdłuższego dostępnego ciągu dat w dokumencie
+            matchingDateSeg = dateSegments.sort((a, b) => b.data.length - a.data.length)[0];
         }
 
-        console.log(`[LOG] Synchronizacja struktur udana. Szukanie najnowszego odczytu rynkowego...`);
+        if (!matchingDateSeg) {
+            throw new Error("Krytyczny błąd: Nie udało się odnaleźć dopasowanej osi czasu dla wyekstrahowanych liczb.");
+        }
 
+        // KROK 3: Odwrócone skanowanie pętli w celu pobrania najnowszego dnia (omijamy przyszły padding null)
         let latestDate = null;
         let latestValue = null;
 
-        // Skanowanie od tyłu w celu pominięcia przyszłego paddingu null
-        for (let idx = soprValues.length - 1; idx >= 0; idx--) {
-            let val = soprValues[idx];
-            if (val !== null && !isNaN(val)) {
-                latestValue = val;
-                latestDate = btcDates[idx] ? btcDates[idx].replace(/["'\s]/g, '') : null;
-                break;
+        for (let idx = soprSegment.data.length - 1; idx >= 0; idx--) {
+            let rawVal = soprSegment.data[idx];
+            if (rawVal !== 'null') {
+                let val = parseFloat(rawVal);
+                if (!isNaN(val)) {
+                    latestValue = val;
+                    latestDate = matchingDateSeg.data[idx] ? matchingDateSeg.data[idx] : null;
+                    break;
+                }
             }
         }
 
         if (!latestDate || latestValue === null) {
-            throw new Error("Wyciągnięta seria nie zawiera poprawnych punktów danych rynkowych.");
+            throw new Error("Agregacja strumienia nie zwróciła żadnej poprawnej wartości numerycznej.");
         }
 
-        console.log(`[SUCCESS] Sukces automatyzacji!`);
-        console.log(`[SUCCESS] Najnowszy dzień: ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
+        console.log(`[SUCCESS] Cel osiągnięty! Dane wyciągnięte pomyślnie.`);
+        console.log(`[SUCCESS] Najnowszy rekord On-Chain: Dzień = ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
 
-        // Zapis struktury do pliku bazodanowego JSON
+        // KROK 4: Zapis do bazy danych JSON
         let localDatabase = [];
         if (fs.existsSync(DATA_PATH)) {
             try {
@@ -124,7 +136,7 @@ async function main() {
                 localDatabase[existingIndex].updatedAt = new Date().toISOString();
                 console.log(`[LOG] Zaktualizowano wartość dla dnia ${latestDate}.`);
             } else {
-                console.log(`[LOG] Dane dla dnia ${latestDate} są zbieżne. Brak zmian.`);
+                console.log(`[LOG] Wpis dla dnia ${latestDate} jest w pełni aktualny.`);
             }
         } else {
             localDatabase.push({
@@ -132,11 +144,11 @@ async function main() {
                 value: latestValue,
                 updatedAt: new Date().toISOString()
             });
-            console.log(`[LOG] Pomyślnie dopisano nowy rekord dla daty: ${latestDate}`);
+            console.log(`[LOG] Pomyślnie dopisano nowy rekord historyczny dla daty: ${latestDate}`);
         }
 
         fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Baza danych JSON została pomyślnie zapisana.`);
+        console.log(`[SUCCESS] Baza danych JSON została pomyślnie zaktualizowana i zapisana.`);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
