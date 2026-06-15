@@ -22,7 +22,11 @@ jobs:
       - name: Setup Node.js Runtime
         uses: actions/setup-node@v4
         with:
-          node-version: '24' # Zaktualizowano z 20 na 24, aby usunąć ostrzeżenie systemowe
+          node-version: '24'
+
+      # Instalacja wirtualnej przeglądarki (trwa kilka sekund)
+      - name: Install Puppeteer
+        run: npm install puppeteer
 
       - name: Execute Scraper Script
         run: node scripts/update-sopr.js
