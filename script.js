@@ -67,15 +67,33 @@ async function init() {
         const latestSTH = sthPriceRaw[sthPriceRaw.length - 1].value;
         const latestLTH = lthPriceRaw[lthPriceRaw.length - 1].value;
 
+        // Pobieramy najświeższe wartości oscylatorów SOPR do wyliczenia tła panelu
+        const latestSTH_sopr = sthSopr[sthSopr.length - 1].value;
+        const latestLTH_sopr = lthSopr[lthSopr.length - 1].value;
+
         document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
         document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
         document.getElementById('val-sth').style.color = latestSTH < latestBTC ? COLORS.text_profit : COLORS.text_loss;
         document.getElementById('val-lth').innerText = formatUSD.format(latestLTH);
         document.getElementById('val-lth').style.color = latestLTH < latestBTC ? COLORS.text_profit : COLORS.text_loss;
 
+        const controlsBar = document.getElementById('controls-bar');
         document.getElementById('loading').style.display = 'none';
-        document.getElementById('controls-bar').style.display = 'flex';
+        controlsBar.style.display = 'flex';
         document.getElementById('chart-wrapper').style.display = 'flex';
+
+        // Funkcja do dynamicznej zmiany tła całego panelu na dole
+        function updatePanelBackground(soprValue) {
+            controlsBar.classList.remove('panel-profit', 'panel-loss');
+            if (soprValue >= 1.0) {
+                controlsBar.add('panel-profit');
+            } else {
+                controlsBar.add('panel-loss');
+            }
+        }
+
+        // Domyslnie na starcie włączony jest LTH SOPR, więc ustawiamy jego stan tła
+        updatePanelBackground(latestLTH_sopr);
 
         // --- WYKRES 1: WYKRES GŁÓWNY (CENA) ---
         const containerMain = document.getElementById('chart-main');
@@ -114,15 +132,11 @@ async function init() {
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
         });
 
-        // STH SOPR domyślnie WYŁĄCZONE na starcie
         const lineSTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false });
         lineSTH_S.setData(sthSopr);
-        
-        // LTH SOPR domyślnie WŁĄCZONE na starcie
         const lineLTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: true });
         lineLTH_S.setData(lthSopr);
 
-        // NAPRAWA: Przypisujemy linię bazową do OBU serii, usuwając napis title (zostaje czysta biała metka na osi Y)
         const priceLineConfig = { price: 1.0, color: 'rgba(255, 255, 255, 0.25)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '' };
         lineSTH_S.createPriceLine(priceLineConfig);
         lineLTH_S.createPriceLine(priceLineConfig);
@@ -202,26 +216,21 @@ async function init() {
         document.querySelector('[data-series="sth"]').addEventListener('click', function() { lineSTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         document.querySelector('[data-series="lth"]').addEventListener('click', function() { lineLTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         
-        // --- KONTROLA PANELU DOLNEGO: TRYB EKSKLUZYWNY (RADIO BUTTON) ---
-        const btnSthSopr = document.getElementById('btn-sth-sopr');
-        const btnLthSopr = document.getElementById('btn-lth-lth'); // pobierane przez id
-        
+        // --- KONTROLA PANELU DOLNEGO: TRYB EKSKLUZYWNY (RADIO BUTTON) + AKTUALIZACJA TŁA ---
         document.getElementById('btn-sth-sopr').addEventListener('click', function() {
-            // Włącz STH, wyłącz LTH
             this.classList.add('active');
             document.getElementById('btn-lth-sopr').classList.remove('active');
-            
             lineSTH_S.applyOptions({ visible: true });
             lineLTH_S.applyOptions({ visible: false });
+            updatePanelBackground(latestSTH_sopr); // Zmień kolor tła na stan STH
         });
 
         document.getElementById('btn-lth-sopr').addEventListener('click', function() {
-            // Włącz LTH, wyłącz STH
             this.classList.add('active');
             document.getElementById('btn-sth-sopr').classList.remove('active');
-            
             lineLTH_S.applyOptions({ visible: true });
             lineSTH_S.applyOptions({ visible: false });
+            updatePanelBackground(latestLTH_sopr); // Zmień kolor tła na stan LTH
         });
 
         // --- PRZYCISKI POMOCNICZE ---
