@@ -81,7 +81,7 @@ async function init() {
         const containerMain = document.getElementById('chart-main');
         const chartMain = LightweightCharts.createChart(containerMain, {
             autoSize: true,
-            layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#8e8e93', fontFamily: 'Inter, sans-serif' },
+            layout: { background: { type: 'solid', color: 'rgba(0,0,0,0)' }, textColor: '#8e8e93', fontFamily: 'Inter, sans-serif' },
             grid: { vertLines: { color: 'rgba(255, 255, 255, 0.03)' }, horzLines: { color: 'rgba(255, 255, 255, 0.03)' } },
             rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
             leftPriceScale: { visible: false }, timeScale: { borderVisible: false, visible: false },
@@ -107,7 +107,7 @@ async function init() {
         const containerSopr = document.getElementById('chart-sopr');
         const chartSopr = LightweightCharts.createChart(containerSopr, {
             autoSize: true,
-            layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#8e8e93', fontFamily: 'Inter, sans-serif' },
+            layout: { background: { type: 'solid', color: 'rgba(0,0,0,0)' }, textColor: '#8e8e93', fontFamily: 'Inter, sans-serif' },
             grid: { vertLines: { color: 'rgba(255, 255, 255, 0.03)' }, horzLines: { color: 'rgba(255, 255, 255, 0.03)' } },
             rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
             leftPriceScale: { visible: false }, timeScale: { borderVisible: false, timeVisible: true },
@@ -123,7 +123,7 @@ async function init() {
         lineSTH_S.createPriceLine(priceLineConfig);
         lineLTH_S.createPriceLine(priceLineConfig);
 
-        // DYNAMICZNE RYSOWANIE POZIOMEGO TŁA (ZYSK/STRATA) W LOCIE
+        // SYSTEM HORIZONALNEGO DZIELENIA TŁA (GÓRA ZIELONA / DÓŁ CZERWONY)
         function updateChartBackground() {
             const activeSeries = lineLTH_S.options().visible ? lineLTH_S : lineSTH_S;
             const coordinate = activeSeries.priceToCoordinate(1.0);
@@ -132,7 +132,6 @@ async function init() {
             const containerHeight = containerSopr.clientHeight;
             const percentage = (coordinate / containerHeight) * 100;
 
-            // Malujemy tło kontenera: góra zielona (0.04), dół czerwona (0.05) odcięte idealnie na linii bazy
             containerSopr.style.background = `linear-gradient(to bottom, 
                 rgba(42, 239, 24, 0.04) 0%, 
                 rgba(42, 239, 24, 0.04) ${percentage}%, 
@@ -140,7 +139,7 @@ async function init() {
                 rgba(255, 59, 48, 0.05) 100%)`;
         }
 
-        // --- SYNCHRONIZACJA OSI ORAZ AKTUALIZACJA POZIOMEGO TŁA ---
+        // --- SYNCHRONIZACJA OSI I ODSWIEZANIE TŁA STREFOWEGO ---
         let isSyncing = false;
         chartMain.timeScale().subscribeVisibleTimeRangeChange(range => {
             if (isSyncing || !range) return; isSyncing = true;
@@ -153,11 +152,10 @@ async function init() {
             requestAnimationFrame(updateChartBackground);
         });
 
-        // Nasłuchiwanie zmian rozmiaru okna, by tło dopasowało się do nowej wysokości
         new ResizeObserver(() => { requestAnimationFrame(updateChartBackground); }).observe(containerSopr);
 
         chartMain.timeScale().fitContent();
-        setTimeout(updateChartBackground, 100); // Pierwsze wyrenderowanie tła po załadowaniu skali
+        setTimeout(updateChartBackground, 150); // Bezpieczny rozruch po załadowaniu skali osi
 
         // --- INTERAKTYWNY TOOLTIP SONDY ---
         const toolTip = document.getElementById('tv-tooltip');
@@ -221,13 +219,13 @@ async function init() {
         document.querySelector('[data-series="sth"]').addEventListener('click', function() { lineSTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         document.querySelector('[data-series="lth"]').addEventListener('click', function() { lineLTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         
-        // --- KONTROLA PANELU DOLNEGO: TRYB EKSKLUZYWNY (RADIO BUTTONS) ---
+        // --- KONTROLA PANELU DOLNEGO (PRZEŁĄCZANIE EKSKLUZYWNE) ---
         document.getElementById('btn-sth-sopr').addEventListener('click', function() {
             this.classList.add('active');
             document.getElementById('btn-lth-sopr').classList.remove('active');
             lineSTH_S.applyOptions({ visible: true });
             lineLTH_S.applyOptions({ visible: false });
-            setTimeout(updateChartBackground, 50); // Przelicz tło dla nowej skali STH
+            setTimeout(updateChartBackground, 50);
         });
 
         document.getElementById('btn-lth-sopr').addEventListener('click', function() {
@@ -235,7 +233,7 @@ async function init() {
             document.getElementById('btn-sth-sopr').classList.remove('active');
             lineLTH_S.applyOptions({ visible: true });
             lineSTH_S.applyOptions({ visible: false });
-            setTimeout(updateChartBackground, 50); // Przelicz tło dla nowej skali LTH
+            setTimeout(updateChartBackground, 50);
         });
 
         // --- PRZYCISKI POMOCNICZE ---
