@@ -1,7 +1,6 @@
 /**
  * Skrypt automatycznie pobierający najnowszą wartość wskaźnika STH-SOPR ze strony CheckOnChain.
- * Wersja V4: Ultra-szybki i odporny skrypt bez-regexowy, bazujący na indeksowaniu strumieniowym.
- * Pozwala na bezbłędne przetwarzanie plików HTML o rozmiarach przekraczających 6MB.
+ * Wersja V5: Inteligentne skanowanie semantyczne. Wyciąga duże bloki danych i filtruje je na podstawie wartości.
  */
 
 const fs = require('fs');
@@ -27,102 +26,72 @@ async function main() {
         const html = await response.text();
         console.log(`[LOG] Pomyślnie pobrano kod HTML (Długość dokumentu: ${html.length} znaków).`);
 
-        console.log("[LOG] Uruchamianie algorytmu wyszukiwania strumieniowego danych Plotly...");
+        console.log("[LOG] Lokaliowanie wszystkich dużych tablic danych w pliku HTML...");
         
-        const discoveredSeries = [];
-        let pos = 0;
+        const largeArrays = [];
+        let searchPos = 0;
 
-        // Skanowanie całego dokumentu znak po znaku za pomocą wydajnej metody indexOf
-        while (pos < html.length) {
-            let xIdx = html.indexOf('x', pos);
-            if (xIdx === -1) break;
-
-            // Wyciągamy mały fragment o długości 50 znaków do analizy struktury klucza
-            let segment = html.substring(xIdx, xIdx + 50);
-            let cleanSeg = segment.replace(/[\s"'\\]/g, '');
-
-            // Jeśli fragment po wyczyszczeniu zbędnych znaków zaczyna się od tablicy osi X
-            if (cleanSeg.startsWith('x:[')) {
-                let startBracket = html.indexOf('[', xIdx);
-                if (startBracket !== -1 && startBracket < xIdx + 50) {
-                    let endBracket = html.indexOf(']', startBracket);
-                    if (endBracket !== -1) {
-                        let rawX = html.substring(startBracket + 1, endBracket);
-
-                        // Szukamy powiązanej osi 'y' w bloku tego samego obiektu (maksymalnie 2000 znaków dalej)
-                        let yIdx = html.indexOf('y', endBracket);
-                        if (yIdx !== -1 && yIdx - endBracket < 2000) {
-                            let ySegment = html.substring(yIdx, yIdx + 50);
-                            let cleanYSeg = ySegment.replace(/[\s"'\\]/g, '');
-
-                            if (cleanYSeg.startsWith('y:[')) {
-                                let yStart = html.indexOf('[', yIdx);
-                                let yEnd = html.indexOf(']', yStart);
-                                if (yStart !== -1 && yEnd !== -1) {
-                                    let rawY = html.substring(yStart + 1, yEnd);
-                                    discoveredSeries.push({ rawX, rawY });
-                                    console.log(`[LOG] Zlokalizowano kompletną serię danych wykresu (Pozycja w pliku: ${xIdx})`);
-                                }
-                            }
-                        }
-                    }
-                }
+        // Wyciągamy z pliku każdy blok zamknięty w nawiasach kwadratowych [ ], który ma ponad 1000 znaków
+        while (true) {
+            let start = html.indexOf('[', searchPos);
+            if (start === -1) break;
+            let end = html.indexOf(']', start);
+            if (end === -1) break;
+            
+            if (end - start > 1000) {
+                largeArrays.push(html.substring(start + 1, end));
             }
-            pos = xIdx + 1;
+            searchPos = end + 1;
         }
 
-        if (discoveredSeries.length === 0) {
-            throw new Error("Krytyczny błąd: Algorytm skanowania strumieniowego nie wyodrębnił serii danych x/y.");
-        }
+        console.log(`[LOG] Znaleziono ${largeArrays.length} dużych struktur danych. Filtrowanie wskaźnika SOPR...`);
 
-        console.log(`[LOG] Przetworzono dokument. Wykryto serii: ${discoveredSeries.length}. Uruchamianie heurystyki STH-SOPR...`);
+        let soprValues = null;
+        let soprDates = null;
 
-        let selectedIndex = -1;
+        // KROK 1: Szukamy tablicy z wartościami SOPR (liczby ze średnią w przedziale 0.5 - 2.0)
+        for (let content of largeArrays) {
+            let cleanY = content.replace(/[\s\\"']/g, '');
+            let items = cleanY.split(',');
+            let sample = items.slice(-20).map(v => parseFloat(v)).filter(v => !isNaN(v));
 
-        // Filtrowanie serii w celu znalezienia wskaźnika SOPR (wartości wokół poziomu 1.0)
-        for (let i = 0; i < discoveredSeries.length; i++) {
-            const cleanY = discoveredSeries[i].rawY.replace(/[\s\\"']/g, '');
-            const sampleValues = cleanY.split(',')
-                .slice(-20) // Analiza ostatnich 20 wpisów rynkowych
-                .map(v => parseFloat(v))
-                .filter(v => !isNaN(v));
-
-            if (sampleValues.length > 0) {
-                const avg = sampleValues.reduce((sum, val) => sum + val, 0) / sampleValues.length;
+            if (sample.length > 0) {
+                let avg = sample.reduce((sum, val) => sum + val, 0) / sample.length;
+                // SOPR oscyluje bardzo blisko wartości 1.0
                 if (avg > 0.5 && avg < 2.0) {
-                    selectedIndex = i;
-                    console.log(`[LOG] Sukces heurystyki! Seria na indeksie ${i} odpowiada charakterystyce STH-SOPR (Średnia: ${avg.toFixed(4)})`);
+                    soprValues = items.map(v => v === 'null' ? null : parseFloat(v));
+                    console.log(`[LOG] Sukces! Zidentyfikowano tablicę wartości SOPR (Średnia próbki: ${avg.toFixed(4)})`);
                     break;
                 }
             }
         }
 
-        if (selectedIndex === -1) {
-            console.warn("[WARN] Heurystyka zawiodła. Wybieranie pierwszej dostępnej serii danych.");
-            selectedIndex = 0;
+        if (!soprValues) {
+            throw new Error("Nie udało się odnaleźć właściwej tablicy wartości wskaźnika SOPR.");
         }
 
-        // Oczyszczanie ostatecznych danych z cudzysłowów i spacji
-        const finalX = discoveredSeries[selectedIndex].rawX.replace(/[\s\\"']/g, '');
-        const finalY = discoveredSeries[selectedIndex].rawY.replace(/[\s\\"']/g, '');
+        // KROK 2: Szukamy tablicy z datami (musi mieć tę samą długość i zawierać myślniki daty)
+        for (let content of largeArrays) {
+            let cleanX = content.replace(/[\s\\"']/g, '');
+            let items = cleanX.split(',').filter(i => i.length > 0);
 
-        const dates = finalX.split(',').filter(d => d.length > 0);
-        const values = finalY.split(',').map(v => v === 'null' ? null : parseFloat(v));
-
-        if (dates.length === 0 || values.length === 0 || dates.length !== values.length) {
-            throw new Error(`Niezgodność struktur danych. Daty: ${dates.length}, Wartości: ${values.length}`);
+            if (items.length === soprValues.length && items[0].includes('-')) {
+                soprDates = items;
+                console.log(`[LOG] Sukces! Dopasowano powiązaną tablicę osi czasu (Liczba punktów: ${soprDates.length})`);
+                break;
+            }
         }
 
-        const latestDate = dates[dates.length - 1];
-        const latestValue = values[values.length - 1];
-
-        if (!latestDate || latestValue === null || isNaN(latestValue)) {
-            throw new Error("Wyciągnięty punkt końcowy zawiera uszkodzone lub puste dane.");
+        if (!soprDates) {
+            throw new Error("Nie udało się dopasować osi czasu (dat) do wartości SOPR.");
         }
+
+        const latestDate = soprDates[soprDates.length - 1];
+        const latestValue = soprValues[soprValues.length - 1];
 
         console.log(`[SUCCESS] Sparowano najnowszy odczyt: ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
 
-        // Odczyt i aktualizacja lokalnego pliku JSON
+        // KROK 3: Aktualizacja bazy danych JSON
         let localDatabase = [];
         if (fs.existsSync(DATA_PATH)) {
             try {
@@ -140,7 +109,7 @@ async function main() {
                 localDatabase[existingIndex].updatedAt = new Date().toISOString();
                 console.log(`[LOG] Zaktualizowano wartość dla daty ${latestDate}.`);
             } else {
-                console.log(`[LOG] Dane dla dnia ${latestDate} są aktualne. Brak zmian.`);
+                console.log(`[LOG] Dane dla dnia ${latestDate} są aktualne.`);
             }
         } else {
             localDatabase.push({
