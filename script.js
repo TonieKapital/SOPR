@@ -1,11 +1,10 @@
+// --- JEDNOLITA PALETA KOLORÓW TOŻSAMOŚCIOWYCH ---
 const COLORS = {
     btc: '#ffffff',
-    sth_price_profit: '#2aef18',
-    sth_price_loss: '#ff3b30',
-    lth_price_profit: '#00d2ff',
-    lth_price_loss: '#0042a5',
-    sth_sopr: '#ff9800', // Pomarańczowy oscylator STH-SOPR
-    lth_sopr: '#00d2ff'  // Niebieski oscylator LTH-SOPR
+    sth: '#ff5722',      // Stały pomarańczowy dla grupy STH
+    lth: '#00d2ff',      // Stały błękitny dla grupy LTH
+    text_profit: '#2aef18', // Neonowa zieleń do akcentowania zysku w napisach
+    text_loss: '#ff3b30'    // Czerwień do akcentowania straty w napisach
 };
 
 const ZONES = {
@@ -63,20 +62,16 @@ async function init() {
 
         const btcMap = new Map(seriesBTC.map(c => [c.time, c.close]));
 
-        // Filtrowanie i kolorowanie linii cen zrealizowanych
-        const seriesSTH_price = sthPriceRaw.map(pt => ({ time: pt.time, value: pt.value, color: pt.value < btcMap.get(pt.time) ? COLORS.sth_price_profit : COLORS.sth_price_loss }));
-        const seriesLTH_price = lthPriceRaw.map(pt => ({ time: pt.time, value: pt.value, color: pt.value < btcMap.get(pt.time) ? COLORS.lth_price_profit : COLORS.lth_price_loss }));
-
         const formatUSD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
         const latestBTC = seriesBTC[seriesBTC.length - 1].close;
-        const latestSTH = seriesSTH_price[seriesSTH_price.length - 1].value;
-        const latestLTH = seriesLTH_price[seriesLTH_price.length - 1].value;
+        const latestSTH = sthPriceRaw[sthPriceRaw.length - 1].value;
+        const latestLTH = lthPriceRaw[lthPriceRaw.length - 1].value;
 
         document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
         document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
-        document.getElementById('val-sth').style.color = latestSTH < latestBTC ? COLORS.sth_price_profit : COLORS.sth_price_loss;
+        document.getElementById('val-sth').style.color = latestSTH < latestBTC ? COLORS.text_profit : COLORS.text_loss;
         document.getElementById('val-lth').innerText = formatUSD.format(latestLTH);
-        document.getElementById('val-lth').style.color = latestLTH < latestBTC ? COLORS.lth_price_profit : COLORS.lth_price_loss;
+        document.getElementById('val-lth').style.color = latestLTH < latestBTC ? COLORS.text_profit : COLORS.text_loss;
 
         document.getElementById('loading').style.display = 'none';
         document.getElementById('controls-bar').style.display = 'flex';
@@ -98,17 +93,18 @@ async function init() {
         const candleBTC = chartMain.addCandlestickSeries({ priceScaleId: 'right', upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', visible: false });
         candleBTC.setData(seriesBTC);
 
-        const lineSTH_P = chartMain.addLineSeries({ priceScaleId: 'right', lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-        lineSTH_P.setData(seriesSTH_price);
-        const lineLTH_P = chartMain.addLineSeries({ priceScaleId: 'right', lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-        lineLTH_P.setData(seriesLTH_price);
+        // Linie cen mają teraz czyste kolory grup
+        const lineSTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        lineSTH_P.setData(sthPriceRaw);
+        const lineLTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        lineLTH_P.setData(lthPriceRaw);
 
         const zoneSeries = chartMain.addHistogramSeries({ priceScaleId: 'zones', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
         chartMain.priceScale('zones').applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
         zoneSeries.setData(seriesBTC.map(pt => ({ time: pt.time, value: 1, color: getZoneColor(pt.time) })));
         zoneSeries.applyOptions({ visible: false });
 
-        // --- WYKRES 2: OSCYLATOR SOPR (CRYPTOQUANT STYLE) ---
+        // --- WYKRES 2: OSCYLATOR SOPR ---
         const containerSopr = document.getElementById('chart-sopr');
         const chartSopr = LightweightCharts.createChart(containerSopr, {
             autoSize: true,
@@ -119,16 +115,16 @@ async function init() {
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
         });
 
-        // Pomarańczowa linia STH SOPR oraz niebieska LTH SOPR
-        const lineSTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.sth_sopr, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        // STH SOPR domyślnie wyłączone na starcie
+        const lineSTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false });
         lineSTH_S.setData(sthSopr);
-        const lineLTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.lth_sopr, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        // LTH SOPR domyślnie włączone
+        const lineLTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: true });
         lineLTH_S.setData(lthSopr);
 
-        // Linia neutralna 1.0 (Granica Zysku i Straty)
         lineSTH_S.createPriceLine({ price: 1.0, color: 'rgba(255, 255, 255, 0.25)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: 'BAZA 1.0' });
 
-        // --- SYNCHRONIZACJA OSI CZASU (LOCKING MECHANISM) ---
+        // --- SYNCHRONIZACJA OSI OSI CZASU ---
         let isSyncing = false;
         chartMain.timeScale().subscribeVisibleTimeRangeChange(range => {
             if (isSyncing || !range) return; isSyncing = true;
@@ -141,10 +137,10 @@ async function init() {
 
         chartMain.timeScale().fitContent();
 
-        // --- INTELLIGENT TOOLTIP FOR BOTH CHARTS ---
+        // --- INTERAKTNYWNY TOOLTIP SONDY ---
         const toolTip = document.getElementById('tv-tooltip');
-        const mapSTH_S = new Map(sthSopr.map(p => [p.time, p.value]));
-        const mapLTH_S = new Map(lthSopr.map(p => [p.time, p.value]));
+        const mapSTH_P = new Map(sthPriceRaw.map(p => [p.time, p.value]));
+        const mapLTH_P = new Map(lthPriceRaw.map(p => [p.time, p.value]));
 
         const handleCrosshairMove = (param) => {
             if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) { toolTip.style.display = 'none'; return; }
@@ -156,37 +152,45 @@ async function init() {
                 html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.btc};"></span>Cena BTC</span><span class="tooltip-value">${formatUSD.format(btcMap.get(t))}</span></div>`;
                 show = true;
             }
-            if (lineSTH_P.options().visible && btcMap.has(t)) {
-                const sP = sthPriceRaw.find(x => x.time === t);
-                if (sP) html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${sP.value < btcMap.get(t) ? COLORS.sth_price_profit : COLORS.sth_price_loss};"></span>STH Price</span><span class="tooltip-value">${formatUSD.format(sP.value)}</span></div>`;
+            // Dynamiczne etykiety Zysk/Strata w tekście dla unifikacji kolorów linii
+            if (lineSTH_P.options().visible && mapSTH_P.has(t) && btcMap.has(t)) {
+                const val = mapSTH_P.get(t); const isProfit = val < btcMap.get(t);
+                const stateText = isProfit ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.sth};"></span>STH Price ${stateText}</span><span class="tooltip-value">${formatUSD.format(val)}</span></div>`;
                 show = true;
             }
-            if (lineLTH_P.options().visible && btcMap.has(t)) {
-                const lP = lthPriceRaw.find(x => x.time === t);
-                if (lP) html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${lP.value < btcMap.get(t) ? COLORS.lth_price_profit : COLORS.lth_price_loss};"></span>LTH Price</span><span class="tooltip-value">${formatUSD.format(lP.value)}</span></div>`;
+            if (lineLTH_P.options().visible && mapLTH_P.has(t) && btcMap.has(t)) {
+                const val = mapLTH_P.get(t); const isProfit = val < btcMap.get(t);
+                const stateText = isProfit ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.lth};"></span>LTH Price ${stateText}</span><span class="tooltip-value">${formatUSD.format(val)}</span></div>`;
                 show = true;
             }
             if (lineSTH_S.options().visible && mapSTH_S.has(t)) {
-                html += `<div class="tooltip-row" style="margin-top:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span><span class="tooltip-color-dot" style="background:${COLORS.sth_sopr};"></span>STH SOPR</span><span class="tooltip-value">${mapSTH_S.get(t).toFixed(4)}</span></div>`;
+                const val = mapSTH_S.get(t);
+                const stateText = val > 1.0 ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row" style="margin-top:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span><span class="tooltip-color-dot" style="background:${COLORS.sth};"></span>STH SOPR ${stateText}</span><span class="tooltip-value">${val.toFixed(4)}</span></div>`;
                 show = true;
             }
             if (lineLTH_S.options().visible && mapLTH_S.has(t)) {
-                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.lth_sopr};"></span>LTH SOPR</span><span class="tooltip-value">${mapLTH_S.get(t).toFixed(4)}</span></div>`;
+                const val = mapLTH_S.get(t);
+                const stateText = val > 1.0 ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.lth};"></span>LTH SOPR ${stateText}</span><span class="tooltip-value">${val.toFixed(4)}</span></div>`;
                 show = true;
             }
 
             if (!show) { toolTip.style.display = 'none'; return; }
             toolTip.innerHTML = html; toolTip.style.display = 'block';
             
-            // Pozycjonowanie względem kontenera głównego wykresu
             let x = param.point.x + 20; if (x + toolTip.offsetWidth > containerMain.clientWidth - 20) x = param.point.x - toolTip.offsetWidth - 20;
             toolTip.style.left = x + 'px'; toolTip.style.top = (containerMain.getBoundingClientRect().top + window.scrollY + 50) + 'px';
         };
 
+        const mapSTH_S = new Map(sthSopr.map(p => [p.time, p.value]));
+        const mapLTH_S = new Map(lthSopr.map(p => [p.time, p.value]));
         chartMain.subscribeCrosshairMove(handleCrosshairMove);
         chartSopr.subscribeCrosshairMove(handleCrosshairMove);
 
-        // --- OBSŁUGA PRZYCISKÓW KONTROLNYCH ---
+        // --- OBSŁUGA POJEDYNCZYCH PRZEŁĄCZNIKÓW (ROZBITA LOGIKA) ---
         const btnBtc = document.querySelector('[data-series="btc"]');
         btnBtc.addEventListener('click', function() {
             const act = this.classList.toggle('active');
@@ -196,9 +200,13 @@ async function init() {
         document.querySelector('[data-series="sth"]').addEventListener('click', function() { lineSTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         document.querySelector('[data-series="lth"]').addEventListener('click', function() { lineLTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         
-        document.querySelector('[data-series="sopr"]').addEventListener('click', function() {
-            const act = this.classList.toggle('active');
-            lineSTH_S.applyOptions({ visible: act }); lineLTH_S.applyOptions({ visible: act });
+        // Całkowicie rozdzielone listenery dolnego paska dla eliminacji płaskiego wykresu
+        document.querySelector('[data-series="sth-sopr"]').addEventListener('click', function() {
+            lineSTH_S.applyOptions({ visible: this.classList.toggle('active') });
+        });
+
+        document.querySelector('[data-series="lth-sopr"]').addEventListener('click', function() {
+            lineLTH_S.applyOptions({ visible: this.classList.toggle('active') });
         });
 
         let isCandleMode = false;
@@ -210,8 +218,7 @@ async function init() {
         document.getElementById('toggle-zones').addEventListener('click', function() { zoneSeries.applyOptions({ visible: this.classList.toggle('active') }); });
         document.getElementById('toggle-log').addEventListener('click', function() {
             const log = this.classList.toggle('active');
-            const mode = log ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal;
-            chartMain.applyOptions({ rightPriceScale: { mode } });
+            chartMain.applyOptions({ rightPriceScale: { mode: log ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal } });
         });
 
     } catch (err) { console.error("Krytyczny błąd UI:", err); }
