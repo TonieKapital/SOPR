@@ -18,71 +18,66 @@ async function main() {
         console.log(`[LOG] Nawiązywanie połączenia z: ${URL}`);
         
         await page.goto(URL, { waitUntil: 'networkidle0', timeout: 60000 });
-        console.log(`[LOG] Strona załadowana. Odszyfrowywanie rzadkich tablic słownikowych...`);
+        console.log(`[LOG] Strona załadowana. Wyciąganie czystych buforów z _fullData...`);
 
         const result = await page.evaluate(() => {
             let plotDiv = document.querySelector('.js-plotly-plot');
-            if (!plotDiv || !plotDiv.data) {
+            
+            // Szukamy wyrenderowanego obiektu z właściwością _fullData (rozpakowane tablice)
+            if (!plotDiv || !plotDiv._fullData) {
                 const allDivs = document.querySelectorAll('div');
                 for (let div of allDivs) {
-                    if (div.data && Array.isArray(div.data) && div.data.length > 0) {
+                    if (div._fullData && Array.isArray(div._fullData)) {
                         plotDiv = div;
                         break;
                     }
                 }
             }
 
-            if (!plotDiv || !plotDiv.data) return { error: "Brak wykresu Plotly w pamięci." };
+            if (!plotDiv || !plotDiv._fullData) return { error: "Brak wyrenderowanych danych (_fullData) w pamięci Plotly." };
 
-            const traces = plotDiv.data;
+            const traces = plotDiv._fullData;
+            let candidates = [];
 
-            // 1. Zabezpieczamy oś czasu z głównego wykresu (Cena posiada pełną tablicę X)
-            let masterX = [];
-            traces.forEach(t => {
-                if (t.x && Array.isArray(t.x) && t.x.length > masterX.length) {
-                    masterX = t.x;
+            traces.forEach(trace => {
+                let name = (trace.name || "").toUpperCase();
+                
+                // Szukamy linii wskaźnika STH-SOPR
+                if (name.includes('SOPR')) {
+                    let xArr = trace.x;
+                    let yArr = trace.y;
+                    
+                    if (xArr && yArr) {
+                        // Skanujemy od końca odszukując najświeższą narysowaną na ekranie wartość
+                        for (let i = yArr.length - 1; i >= 0; i--) {
+                            let y = yArr[i];
+                            if (y !== null && y !== undefined && !isNaN(y)) {
+                                candidates.push({
+                                    date: String(xArr[i]).split('T')[0].split(' ')[0], // czyszczenie daty
+                                    value: parseFloat(y),
+                                    time: new Date(String(xArr[i])).getTime()
+                                });
+                                break;
+                            }
+                        }
+                    }
                 }
             });
 
-            if (masterX.length === 0) return { error: "Nie odnaleziono osi dat." };
-
-            // 2. Łapiemy obie części rozbitego wskaźnika STH-SOPR
-            const traceHigh = traces.find(t => t.name && t.name.includes('STH-SOPR > 1'));
-            const traceLow = traces.find(t => t.name && t.name.includes('STH-SOPR < 1'));
-
-            if (!traceHigh && !traceLow) return { error: "Nie odnaleziono linii STH-SOPR." };
-
-            let latestDate = null;
-            let latestValue = null;
-
-            // 3. PĘTLA KLUCZOWA: Iterujemy po długości osi X!
-            // Oś Y to Obiekt (słownik), wyciągamy z niego wartości podając indeks klucza
-            for (let i = masterX.length - 1; i >= 0; i--) {
-                let valHigh = (traceHigh && traceHigh.y && traceHigh.y[i] !== undefined) ? traceHigh.y[i] : null;
-                let valLow = (traceLow && traceLow.y && traceLow.y[i] !== undefined) ? traceLow.y[i] : null;
-
-                let val = null;
-                // Wybieramy wartość z tej linii (słownika), która przechowuje wpis na dany dzień
-                if (valHigh !== null && !isNaN(valHigh)) val = valHigh;
-                else if (valLow !== null && !isNaN(valLow)) val = valLow;
-
-                if (val !== null) {
-                    let dateStr = String(masterX[i]);
-                    latestDate = dateStr.split('T')[0].split(' ')[0]; // Zostawiamy czyste YYYY-MM-DD
-                    latestValue = parseFloat(val);
-                    break;
-                }
+            if (candidates.length > 0) {
+                // Wybieramy najświeższy punkt ze wszystkich znalezionych fragmentów linii
+                candidates.sort((a, b) => b.time - a.time);
+                return { date: candidates[0].date, value: candidates[0].value };
             }
 
-            if (latestDate) return { date: latestDate, value: latestValue };
-            return { error: "Słowniki Y nie zawierały żadnych pasujących liczb." };
+            return { error: "W rozpakowanych danych _fullData nadal brak liczb." };
         });
 
         if (result.error) {
             throw new Error(result.error);
         }
 
-        console.log(`[SUCCESS] BINGO! Odszyfrowano słowniki w pamięci RAM!`);
+        console.log(`[SUCCESS] BINGO! Pobrano wyrenderowane piksele z pamięci karty graficznej!`);
         console.log(`[SUCCESS] Najnowszy punkt z giełdy: Dzień = ${result.date} | Wartość STH-SOPR = ${result.value}`);
 
         let localDatabase = [];
