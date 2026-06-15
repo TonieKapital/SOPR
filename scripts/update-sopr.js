@@ -44,7 +44,12 @@ async function main() {
                         for (let i = 0; i < yArr.length; i++) {
                             if (yArr[i] !== null && !isNaN(yArr[i])) {
                                 let dateStr = String(xArr[i]).split('T')[0];
-                                soprMap[dateStr] = parseFloat(yArr[i]);
+                                let val = parseFloat(yArr[i]);
+                                
+                                // NAPRAWA: Zapisz 1.0 tylko jeśli dzień jest pusty. Nie pozwól nadpisać realnego zysku!
+                                if (soprMap[dateStr] === undefined || val !== 1.0) {
+                                    soprMap[dateStr] = val;
+                                }
                             }
                         }
                     }
