@@ -3,109 +3,73 @@ const path = require('path');
 const puppeteer = require('puppeteer');
 
 const URL = 'https://charts.checkonchain.com/btconchain/realised/sthsopr_indicator/sthsopr_indicator_light.html';
-// Zmiana nazwy pliku wyjściowego na sth-realised-price.json
-const DATA_PATH = path.join(__dirname, '../data/sth-realised-price.json');
+const PRICE_PATH = path.join(__dirname, '../data/sth-realised-price.json');
+const SOPR_PATH = path.join(__dirname, '../data/sth-sopr.json');
 
 async function main() {
-    console.log(`[LOG] Uruchamianie wirtualnej przeglądarki Chrome...`);
-    
-    const browser = await puppeteer.launch({
-        headless: "new",
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu']
-    });
+    console.log(`[LOG] Uruchamianie Chrome dla STH...`);
+    const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'] });
 
     try {
         const page = await browser.newPage();
-        console.log(`[LOG] Nawiązywanie połączenia z: ${URL}`);
-        
         await page.goto(URL, { waitUntil: 'networkidle0', timeout: 60000 });
-        console.log(`[LOG] Strona załadowana. Wyciąganie linii "STH Realised Price"...`);
+        console.log(`[LOG] Wyciąganie kompletnych danych STH (Cena + SOPR)...`);
 
         const result = await page.evaluate(() => {
             let plotDiv = document.querySelector('.js-plotly-plot');
-            
             if (!plotDiv || !plotDiv._fullData) {
                 const allDivs = document.querySelectorAll('div');
-                for (let div of allDivs) {
-                    if (div._fullData && Array.isArray(div._fullData)) {
-                        plotDiv = div;
-                        break;
-                    }
-                }
+                for (let div of allDivs) { if (div._fullData) { plotDiv = div; break; } }
             }
-
-            if (!plotDiv || !plotDiv._fullData) return { error: "Brak wyrenderowanych danych (_fullData)." };
+            if (!plotDiv || !plotDiv._fullData) return { error: "Brak danych _fullData." };
 
             const traces = plotDiv._fullData;
-            let historyArray = [];
+            let priceHistory = [];
+            let soprMap = {};
 
             traces.forEach(trace => {
                 let name = (trace.name || "").toUpperCase();
-                
-                // Szukamy konkretnie linii STH Realised Price (czerwonej)
-                if (name.includes('STH REALISED PRICE')) {
-                    let xArr = trace.x;
-                    let yArr = trace.y;
-                    
-                    if (xArr && yArr) {
+                let xArr = trace.x;
+                let yArr = trace.y;
+
+                if (xArr && yArr) {
+                    if (name.includes('STH REALISED PRICE')) {
                         for (let i = 0; i < yArr.length; i++) {
-                            let y = yArr[i];
-                            // Pobieramy wszystkie niepuste punkty na osi czasu
-                            if (y !== null && y !== undefined && !isNaN(y)) {
-                                let dateStr = String(xArr[i]).split('T')[0].split(' ')[0]; 
-                                historyArray.push({
-                                    date: dateStr,
-                                    value: parseFloat(y)
-                                });
+                            if (yArr[i] !== null && !isNaN(yArr[i])) {
+                                priceHistory.push({ date: String(xArr[i]).split('T')[0], value: parseFloat(yArr[i]) });
+                            }
+                        }
+                    }
+                    if (name.includes('SOPR > 1') || name.includes('SOPR < 1')) {
+                        for (let i = 0; i < yArr.length; i++) {
+                            if (yArr[i] !== null && !isNaN(yArr[i])) {
+                                let dateStr = String(xArr[i]).split('T')[0];
+                                soprMap[dateStr] = parseFloat(yArr[i]);
                             }
                         }
                     }
                 }
             });
 
-            if (historyArray.length > 0) {
-                // Sortujemy chronologicznie od najstarszej do najnowszej daty
-                historyArray.sort((a, b) => new Date(a.date) - new Date(b.date));
-                return { history: historyArray };
-            }
+            let soprHistory = Object.keys(soprMap).map(d => ({ date: d, value: soprMap[d] }));
+            priceHistory.sort((a,b) => new Date(a.date) - new Date(b.date));
+            soprHistory.sort((a,b) => new Date(a.date) - new Date(b.date));
 
-            return { error: "Nie odnaleziono danych dla STH Realised Price." };
+            return { priceHistory, soprHistory };
         });
 
-        if (result.error) {
-            throw new Error(result.error);
-        }
+        if (result.error) throw new Error(result.error);
 
-        console.log(`[SUCCESS] Znaleziono linię STH Realised Price! Liczba punktów: ${result.history.length}`);
-        
-        const latest = result.history[result.history.length - 1];
-        // Wyświetlanie wartości jako ceny w dolarach
-        console.log(`[SUCCESS] Najnowsza wycena (STH Realised Price): Dzień = ${latest.date} | Wartość = $${latest.value.toFixed(2)}`);
-
-        const now = new Date().toISOString();
-        const finalDatabase = result.history.map(item => ({
-            date: item.date,
-            value: item.value,
-            updatedAt: now
-        }));
-
-        // Upewniamy się, że folder data istnieje zanim zapiszemy nowy plik
-        const dir = path.dirname(DATA_PATH);
-        if (!fs.existsSync(dir)){
-            fs.mkdirSync(dir, { recursive: true });
-        }
-
-        // Zapis do nowego pliku JSON
-        fs.writeFileSync(DATA_PATH, JSON.stringify(finalDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Baza danych JSON zapisana bezbłędnie.`);
+        fs.mkdirSync(path.dirname(PRICE_PATH), { recursive: true });
+        fs.writeFileSync(PRICE_PATH, JSON.stringify(result.priceHistory, null, 2), 'utf-8');
+        fs.writeFileSync(SOPR_PATH, JSON.stringify(result.soprHistory, null, 2), 'utf-8');
+        console.log(`[SUCCESS] Zapisano pliki dla STH (Cena: ${result.priceHistory.length} pkt, SOPR: ${result.soprHistory.length} pkt)`);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
         process.exit(1);
     } finally {
         await browser.close();
-        console.log(`[LOG] Przeglądarka zamknięta.`);
     }
 }
-
 main();
