@@ -17,13 +17,8 @@ async function main() {
         const page = await browser.newPage();
         console.log(`[LOG] Nawiązywanie połączenia z: ${URL}`);
         
-        // Zmiana taktyki: czekamy na wyciszenie sieci, a następnie wymuszamy 5 sekund twardego snu
-        // Daje to pewność, że ciężkie skrypty Plotly zdążą rozpakować binarne wartości
-        await page.goto(URL, { waitUntil: 'networkidle2', timeout: 60000 });
-        console.log(`[LOG] Sieć wyciszona. Oczekiwanie 5 sekund na wewnętrzną dekompresję JS...`);
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        
-        console.log(`[LOG] Uruchamianie SONDY PAMIĘCI RAM...`);
+        await page.goto(URL, { waitUntil: 'networkidle0', timeout: 60000 });
+        console.log(`[LOG] Strona załadowana. Odszyfrowywanie rzadkich tablic słownikowych...`);
 
         const result = await page.evaluate(() => {
             let plotDiv = document.querySelector('.js-plotly-plot');
@@ -37,64 +32,72 @@ async function main() {
                 }
             }
 
-            if (!plotDiv || !plotDiv.data) return { error: "Brak wykresu Plotly w pamięci DOM." };
+            if (!plotDiv || !plotDiv.data) return { error: "Brak wykresu Plotly w pamięci." };
 
             const traces = plotDiv.data;
-            let report = [];
 
-            traces.forEach((t, i) => {
-                let name = t.name || `Trace_${i}`;
-                // Interesują nas tylko główne linie, w tym cena i SOPR
-                if (name.includes('SOPR') || name.includes('Price')) {
-                    let xLen = t.x ? t.x.length : 0;
-                    let yLen = t.y ? t.y.length : 0;
-                    let xType = t.x ? t.x.constructor.name : 'Brak osi X';
-                    let yType = t.y ? t.y.constructor.name : 'Brak osi Y';
-
-                    let lastValidY = [];
-                    let lastValidX = [];
-
-                    // Próbujemy wyciągnąć 3 ostatnie fizyczne liczby z osi Y i dopasowane do nich daty
-                    if (t.y && t.y.length > 0) {
-                        for(let j = t.y.length - 1; j >= 0; j--) {
-                            if(t.y[j] !== null && t.y[j] !== undefined) {
-                                lastValidY.push(t.y[j]);
-                                if (t.x && t.x[j]) {
-                                    lastValidX.push(t.x[j]);
-                                } else {
-                                    lastValidX.push("UNDEFINED");
-                                }
-                                if (lastValidY.length === 3) break;
-                            }
-                        }
-                    }
-
-                    report.push(`[${name}] X: (typ: ${xType}, len: ${xLen}) | Y: (typ: ${yType}, len: ${yLen}) | Ost. daty: ${JSON.stringify(lastValidX)} | Ost. wart: ${JSON.stringify(lastValidY)}`);
+            // 1. Zabezpieczamy oś czasu z głównego wykresu (Cena posiada pełną tablicę X)
+            let masterX = [];
+            traces.forEach(t => {
+                if (t.x && Array.isArray(t.x) && t.x.length > masterX.length) {
+                    masterX = t.x;
                 }
             });
 
-            return { dump: report };
+            if (masterX.length === 0) return { error: "Nie odnaleziono osi dat." };
+
+            // 2. Łapiemy obie części rozbitego wskaźnika STH-SOPR
+            const traceHigh = traces.find(t => t.name && t.name.includes('STH-SOPR > 1'));
+            const traceLow = traces.find(t => t.name && t.name.includes('STH-SOPR < 1'));
+
+            if (!traceHigh && !traceLow) return { error: "Nie odnaleziono linii STH-SOPR." };
+
+            let latestDate = null;
+            let latestValue = null;
+
+            // 3. PĘTLA KLUCZOWA: Iterujemy po długości osi X!
+            // Oś Y to Obiekt (słownik), wyciągamy z niego wartości podając indeks klucza
+            for (let i = masterX.length - 1; i >= 0; i--) {
+                let valHigh = (traceHigh && traceHigh.y && traceHigh.y[i] !== undefined) ? traceHigh.y[i] : null;
+                let valLow = (traceLow && traceLow.y && traceLow.y[i] !== undefined) ? traceLow.y[i] : null;
+
+                let val = null;
+                // Wybieramy wartość z tej linii (słownika), która przechowuje wpis na dany dzień
+                if (valHigh !== null && !isNaN(valHigh)) val = valHigh;
+                else if (valLow !== null && !isNaN(valLow)) val = valLow;
+
+                if (val !== null) {
+                    let dateStr = String(masterX[i]);
+                    latestDate = dateStr.split('T')[0].split(' ')[0]; // Zostawiamy czyste YYYY-MM-DD
+                    latestValue = parseFloat(val);
+                    break;
+                }
+            }
+
+            if (latestDate) return { date: latestDate, value: latestValue };
+            return { error: "Słowniki Y nie zawierały żadnych pasujących liczb." };
         });
 
         if (result.error) {
             throw new Error(result.error);
         }
 
-        console.log(`\n==================== [MEMORY DUMP] ====================`);
-        result.dump.forEach(line => console.log(line));
-        console.log(`=======================================================\n`);
-        
-        // Zatrzymujemy program z błędem celowo, aby zrzucić logi do ekranu Actions
-        console.log(`[CRITICAL ERROR] Praca przerwana celowo. Algorytm zatrzymał się, by wyświetlić zrzut pamięci.`);
-        process.exit(1);
+        console.log(`[SUCCESS] BINGO! Odszyfrowano słowniki w pamięci RAM!`);
+        console.log(`[SUCCESS] Najnowszy punkt z giełdy: Dzień = ${result.date} | Wartość STH-SOPR = ${result.value}`);
 
-    } catch (error) {
-        console.error("[CRITICAL ERROR]", error.message);
-        process.exit(1);
-    } finally {
-        await browser.close();
-        console.log(`[LOG] Przeglądarka zamknięta.`);
-    }
-}
+        let localDatabase = [];
+        if (fs.existsSync(DATA_PATH)) {
+            try {
+                localDatabase = JSON.parse(fs.readFileSync(DATA_PATH, 'utf-8'));
+            } catch (e) {
+                localDatabase = [];
+            }
+        }
 
-main();
+        const existingIndex = localDatabase.findIndex(item => item.date === result.date);
+
+        if (existingIndex !== -1) {
+            if (localDatabase[existingIndex].value !== result.value) {
+                localDatabase[existingIndex].value = result.value;
+                localDatabase[existingIndex].updatedAt = new Date().toISOString();
+                console.log(`
