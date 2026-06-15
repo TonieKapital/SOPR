@@ -1,7 +1,7 @@
 // --- USTAWIENIA PALETY KOLORÓW ---
 const COLORS = {
     btc: '#ffffff',
-    sopr: '#9ff321' // Identyczny neonowy zielony z Twojego pierwotnego szablonu
+    sth: '#ff5722' // Pomarańczowo-czerwony kolor z oryginalnego wskaźnika CheckOnChain
 };
 
 // --- LOGIKA STREF HALVINGOWYCH/CYKLI (Pine Script) ---
@@ -70,13 +70,13 @@ async function fetchBitstampData() {
     return allCandles;
 }
 
-// --- POBIERANIE WSKAŹNIKA STH-SOPR Z TWOJEGO PLIKU JSON ---
-async function fetchSoprData() {
-    const response = await fetch('./data/sth-sopr.json');
-    if (!response.ok) throw new Error("Nie znaleziono pliku bazy danych STH-SOPR.");
+// --- POBIERANIE NOWEGO WSKAŹNIKA Z TWOJEGO PLIKU JSON ---
+async function fetchSthData() {
+    const response = await fetch('./data/sth-realised-price.json');
+    if (!response.ok) throw new Error("Nie znaleziono pliku bazy danych sth-realised-price.json.");
     const json = await response.json();
     
-    // Konwersja formatu daty "YYYY-MM-DD" na Unix Timestamp (sekundy) dla dopasowania osi czasu
+    // Konwersja formatu daty "YYYY-MM-DD" na Unix Timestamp
     return json.map(item => ({
         time: Math.floor(Date.parse(item.date) / 1000),
         value: item.value
@@ -85,25 +85,23 @@ async function fetchSoprData() {
 
 async function init() {
     try {
-        // Równoległe pobieranie danych
-        const [seriesBTC, seriesSOPR] = await Promise.all([
+        const [seriesBTC, seriesSTH] = await Promise.all([
             fetchBitstampData(),
-            fetchSoprData()
+            fetchSthData()
         ]);
 
-        if (seriesBTC.length === 0 || seriesSOPR.length === 0) throw new Error("Błąd ładowania serii danych.");
+        if (seriesBTC.length === 0 || seriesSTH.length === 0) throw new Error("Błąd ładowania serii danych.");
 
-        // Formatowanie i podstawianie nagłówków statystyk
         const formatUSD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
         const latestBTC = seriesBTC[seriesBTC.length - 1].value;
-        const latestSOPR = seriesSOPR[seriesSOPR.length - 1].value;
+        const latestSTH = seriesSTH[seriesSTH.length - 1].value;
 
         document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
-        document.getElementById('val-sopr').innerText = latestSOPR.toFixed(4);
+        document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
         
-        // Dynamiczny stan rynku na podstawie poziomu 1.0 wskaźnika SOPR
+        // Aktualizacja logiki: Zysk gdy Cena BTC > STH Realised Price
         const statusElement = document.getElementById('val-status');
-        if (latestSOPR > 1.0) {
+        if (latestBTC > latestSTH) {
             statusElement.innerText = "ZYSK (Bullish)";
             statusElement.style.color = "#2aef18";
         } else {
@@ -111,7 +109,6 @@ async function init() {
             statusElement.style.color = "#ff3b30";
         }
 
-        // Przełączenie widoków ładowania
         document.getElementById('loading').style.display = 'none';
         document.getElementById('controls-bar').style.display = 'flex';
         document.getElementById('chart-wrapper').style.display = 'flex';
@@ -123,7 +120,7 @@ async function init() {
                 layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#8e8e93', fontFamily: 'Inter, sans-serif' },
                 grid: { vertLines: { color: 'rgba(255, 255, 255, 0.04)' }, horzLines: { color: 'rgba(255, 255, 255, 0.04)' } },
                 rightPriceScale: { mode: LightweightCharts.PriceScaleMode.Normal, borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
-                leftPriceScale: { visible: true, borderVisible: false, scaleMargins: { top: 0.2, bottom: 0.2 } },
+                leftPriceScale: { visible: false }, // Wyłączamy lewą oś, bo oba wykresy są w USD
                 timeScale: { borderVisible: false, timeVisible: true, fixLeftEdge: true, fixRightEdge: true },
                 crosshair: { mode: LightweightCharts.CrosshairMode.Normal, vertLine: { color: 'rgba(255, 255, 255, 0.2)', width: 1, style: 3 }, horzLine: { color: 'rgba(255, 255, 255, 0.2)', width: 1, style: 3 } }
             });
@@ -159,26 +156,16 @@ async function init() {
             const lineBTC = chart.addLineSeries({ priceScaleId: 'right', color: COLORS.btc, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
             lineBTC.setData(seriesBTC);
 
-            // --- SERIA 2: WSKAŹNIK STH-SOPR (Lewa oś) ---
-            const lineSOPR = chart.addLineSeries({ priceScaleId: 'left', color: COLORS.sopr, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-            lineSOPR.setData(seriesSOPR);
-
-            // Dodanie linii horyzontalnej punktu neutralnego 1.0 dla SOPR
-            lineSOPR.createPriceLine({
-                price: 1.0,
-                color: 'rgba(255, 255, 255, 0.3)',
-                lineWidth: 1,
-                lineStyle: LightweightCharts.LineStyle.Dotted,
-                axisLabelVisible: true,
-                title: 'BAZA 1.0',
-            });
+            // --- SERIA 2: STH REALISED PRICE (Też prawa oś!) ---
+            const lineSTH = chart.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+            lineSTH.setData(seriesSTH);
 
             chart.timeScale().fitContent();
 
             // --- OBSŁUGA INTERAKTYWNEGO TOOLTIPA ---
             const toolTip = document.getElementById('tv-tooltip');
             const mapBTC = new Map(seriesBTC.map(p => [p.time, p.value]));
-            const mapSOPR = new Map(seriesSOPR.map(p => [p.time, p.value]));
+            const mapSTH = new Map(seriesSTH.map(p => [p.time, p.value]));
 
             chart.subscribeCrosshairMove(param => {
                 if (param.point === undefined || !param.time || param.point.x < 0 || param.point.x > chartContainer.clientWidth || param.point.y < 0 || param.point.y > chartContainer.clientHeight) {
@@ -195,8 +182,8 @@ async function init() {
                     html += `<div class="tooltip-row"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${COLORS.btc};"></span><span class="tooltip-label">Cena BTC</span></span> <span class="tooltip-value">${formatUSD.format(mapBTC.get(timeSec))}</span></div>`;
                     showTooltip = true;
                 }
-                if (lineSOPR.options().visible && mapSOPR.has(timeSec)) {
-                    html += `<div class="tooltip-row" style="margin-top: 6px;"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${COLORS.sopr};"></span><span class="tooltip-label">STH-SOPR</span></span> <span class="tooltip-value">${mapSOPR.get(timeSec).toFixed(4)}</span></div>`;
+                if (lineSTH.options().visible && mapSTH.has(timeSec)) {
+                    html += `<div class="tooltip-row" style="margin-top: 6px;"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${COLORS.sth};"></span><span class="tooltip-label">STH Realised Price</span></span> <span class="tooltip-value">${formatUSD.format(mapSTH.get(timeSec))}</span></div>`;
                     showTooltip = true;
                 }
 
@@ -213,7 +200,7 @@ async function init() {
             });
 
             // --- OBSŁUGA PANELU KONTROLNEGO ---
-            const controls = { 'btc': [lineBTC], 'sopr': [lineSOPR] };
+            const controls = { 'btc': [lineBTC], 'sth': [lineSTH] };
 
             document.querySelectorAll('.toggle-btn').forEach(btn => {
                 btn.addEventListener('click', function() {
