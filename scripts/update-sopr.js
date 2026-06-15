@@ -4,10 +4,10 @@ const path = require('path');
 const URL = 'https://charts.checkonchain.com/btconchain/realised/sthsopr_indicator/sthsopr_indicator_light.html';
 const DATA_PATH = path.join(__dirname, '../data/sth-sopr.json');
 
-// Funkcja precyzyjnie wycinająca zawartość tablicy z uwzględnieniem zagnieżdżeń
+// Precyzyjne wycinanie zawartości tablicy [ ] z uwzględnieniem głębokości nawiasów
 function extractArrayAt(html, startPos) {
     let startBracket = html.indexOf('[', startPos);
-    if (startBracket === -1) return null;
+    if (startBracket === -1 || (startBracket - startPos) > 30) return null;
     
     let depth = 1;
     let endBracket = -1;
@@ -21,7 +21,6 @@ function extractArrayAt(html, startPos) {
             break;
         }
     }
-    
     return endBracket !== -1 ? html.substring(startBracket + 1, endBracket) : null;
 }
 
@@ -40,11 +39,12 @@ async function main() {
         }
         
         const html = await response.text();
-        console.log(`[LOG] Pomyślnie pobrano kod HTML (Długość dokumentu: ${html.length} znaków).`);
-        console.log("[LOG] Skanowanie semantyczne w poszukiwaniu serii wartości (oś Y)...");
+        console.log(`[LOG] Pomyślnie pobrano kod HTML (Długość: ${html.length} znaków).`);
+        console.log("[LOG] Skanowanie kontekstowe struktur wykresów Plotly...");
         
         let pos = 0;
-        const discoveredY = [];
+        const matchingSoprTraces = [];
+        let globalDatesArray = null;
 
         while (pos < html.length) {
             let idx = html.indexOf('y', pos);
@@ -54,91 +54,86 @@ async function main() {
             let cleanSlice = slice.replace(/[\s"'\\]/g, '');
             
             if (cleanSlice.includes('y:')) {
-                let content = extractArrayAt(html, idx);
-                if (content && content.length > 1000) {
-                    discoveredY.push({ content, startPos: idx });
+                let yContent = extractArrayAt(html, idx);
+                if (yContent && yContent.length > 1000) {
+                    
+                    // Pobieramy kontekst tekstowy wokół tej serii (2500 znaków przed i po)
+                    let contextWindow = html.substring(Math.max(0, idx - 2500), Math.min(html.length, idx + 2500));
+                    
+                    // Sprawdzamy czy w otoczeniu tej serii znajduje się wzmianka o SOPR
+                    if (/sopr|short-term/i.test(contextWindow)) {
+                        const cleanY = yContent.replace(/[\s\\"']/g, '');
+                        const itemsY = cleanY.split(',');
+                        
+                        // Próbujemy wyciągnąć oś czasu (X) z tego samego bloku kontekstowego
+                        let xIdx = contextWindow.indexOf('x:');
+                        if (xIdx === -1) xIdx = contextWindow.indexOf('"x":');
+                        
+                        if (xIdx !== -1) {
+                            let absoluteXIdx = Math.max(0, idx - 2500) + xIdx;
+                            let xContent = extractArrayAt(html, absoluteXIdx);
+                            if (xContent) {
+                                const itemsX = xContent.replace(/[\s\\"']/g, '').split(',').filter(d => d.length > 0);
+                                if (itemsX.length === itemsY.length) {
+                                    globalDatesArray = itemsX;
+                                }
+                            }
+                        }
+                        
+                        matchingSoprTraces.push(itemsY);
+                        console.log(`[LOG] Znaleziono serię powiązaną ze wskaźnikiem SOPR (Liczba punktów: ${itemsY.length})`);
+                    }
                 }
             }
             pos = idx + 1;
         }
 
-        console.log(`[LOG] Zlokalizowano ${discoveredY.length} serii liczbowych. Filtrowanie wskaźnika STH-SOPR...`);
-
-        let winningY = null;
-        let soprValues = null;
-
-        for (let yData of discoveredY) {
-            let cleanRaw = yData.content.replace(/[\s\\"']/g, '');
-            let items = cleanRaw.split(',');
-            let validNumbers = items.map(v => parseFloat(v)).filter(v => !isNaN(v));
-            
-            if (validNumbers.length > 500) {
-                let avg = validNumbers.reduce((sum, val) => sum + val, 0) / validNumbers.length;
-                if (avg > 0.5 && avg < 2.0) {
-                    winningY = yData;
-                    soprValues = items.map(v => v === 'null' ? null : parseFloat(v));
-                    console.log(`[LOG] Sukces! Seria na pozycji ${yData.startPos} to STH-SOPR (Globalna średnia: ${avg.toFixed(4)})`);
-                    break;
-                }
-            }
+        if (matchingSoprTraces.length === 0 || !globalDatesArray) {
+            throw new Error("Krytyczny błąd: Algorytm kontekstowy nie zidentyfikował serii powiązanych ze słowem kluczowym SOPR.");
         }
 
-        if (!winningY || !soprValues) {
-            throw new Error("Nie znaleziono serii liczbowej odpowiadającej profilowi wskaźnika SOPR.");
-        }
+        console.log(`[LOG] Zlokalizowano segmenty wskaźnika (Suma serii: ${matchingSoprTraces.length}). Scalanie danych w jedną linię bazową...`);
 
-        console.log("[LOG] Poszukiwanie powiązanej osi czasu (X)...");
-        let searchStart = Math.max(0, winningY.startPos - 10000);
-        let searchEnd = Math.min(html.length, winningY.startPos + 10000);
-        let windowText = html.substring(searchStart, searchEnd);
-        
-        let localPos = 0;
-        let soprDates = null;
+        // Inteligentne scalanie: Jeśli wykres był podzielony na strefy >1 i <1, łączymy je w jeden nieprzerwany ciąg
+        const finalSoprValues = [];
+        const dataLength = globalDatesArray.length;
 
-        while (localPos < windowText.length) {
-            let xIdx = windowText.indexOf('x', localPos);
-            if (xIdx === -1) break;
+        for (let i = 0; i < dataLength; i++) {
+            let mergedValue = null;
             
-            let slice = windowText.substring(Math.max(0, xIdx - 5), Math.min(windowText.length, xIdx + 20));
-            let cleanSlice = slice.replace(/[\s"'\\]/g, '');
-            
-            if (cleanSlice.includes('x:')) {
-                let absoluteXIdx = searchStart + xIdx;
-                let xContent = extractArrayAt(html, absoluteXIdx);
-                if (xContent) {
-                    let items = xContent.replace(/[\s\\"']/g, '').split(',').filter(i => i.length > 0);
-                    if (items.length === soprValues.length) {
-                        soprDates = items;
-                        console.log(`[LOG] Sukces! Zsynchronizowano oś czasu (Liczba rekordów: ${soprDates.length})`);
+            for (let trace of matchingSoprTraces) {
+                let rawVal = trace[i];
+                if (rawVal !== undefined && rawVal !== 'null' && rawVal !== '') {
+                    let parsed = parseFloat(rawVal);
+                    if (!isNaN(parsed)) {
+                        mergedValue = parsed;
                         break;
                     }
                 }
             }
-            localPos = xIdx + 1;
+            finalSoprValues.push(mergedValue);
         }
 
-        if (!soprDates) {
-            throw new Error("Błąd krytyczny: Nie udało się odnaleźć dopasowanej osi dat dla tego wykresu.");
-        }
-
+        // Pętla wsteczna (Backward Scan) poszukująca ostatniego dnia, który nie jest nullem (omijanie przyszłego paddingu)
         let latestDate = null;
         let latestValue = null;
 
-        for (let i = soprValues.length - 1; i >= 0; i--) {
-            let val = soprValues[i];
-            if (val !== null && !isNaN(val)) {
-                latestValue = val;
-                latestDate = soprDates[i];
+        for (let i = finalSoprValues.length - 1; i >= 0; i--) {
+            if (finalSoprValues[i] !== null) {
+                latestValue = finalSoprValues[i];
+                latestDate = globalDatesArray[i];
                 break;
             }
         }
 
         if (!latestDate || latestValue === null) {
-            throw new Error("Seria danych nie zawiera żadnej poprawnej wartości rynkowej.");
+            throw new Error("Błąd agregacji: Zrekonstruowana seria danych nie zawiera poprawnych punktów rynkowych.");
         }
 
-        console.log(`[SUCCESS] Najnowszy realny odczyt z rynku: Dzień = ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
+        console.log(`[SUCCESS] Koniec wykresu zidentyfikowany pomyślnie!`);
+        console.log(`[SUCCESS] Najnowszy dzień w sieci: ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
 
+        // Zapis do bazy danych JSON
         let localDatabase = [];
         if (fs.existsSync(DATA_PATH)) {
             try {
@@ -154,9 +149,9 @@ async function main() {
             if (localDatabase[existingIndex].value !== latestValue) {
                 localDatabase[existingIndex].value = latestValue;
                 localDatabase[existingIndex].updatedAt = new Date().toISOString();
-                console.log(`[LOG] Zaktualizowano wartość dla daty ${latestDate}.`);
+                console.log(`[LOG] Zaktualizowano odczyt dla dnia ${latestDate}.`);
             } else {
-                console.log(`[LOG] Dane dla dnia ${latestDate} są aktualne. Brak zmian.`);
+                console.log(`[LOG] Wpis dla daty ${latestDate} jest aktualny. Brak zmian.`);
             }
         } else {
             localDatabase.push({
@@ -164,11 +159,11 @@ async function main() {
                 value: latestValue,
                 updatedAt: new Date().toISOString()
             });
-            console.log(`[LOG] Dodano nowy rekord historyczny dla daty: ${latestDate}`);
+            console.log(`[LOG] Pomyślnie dopisano nowy rekord historyczny dla dnia: ${latestDate}`);
         }
 
         fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Plik bazy danych JSON został pomyślnie zapisany.`);
+        console.log(`[SUCCESS] Plik bazy danych JSON został zaktualizowany.`);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
