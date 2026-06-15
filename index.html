@@ -8,12 +8,25 @@
     <link rel="stylesheet" href="./style.css">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
     <style>
-        /* Stylizacja kafelków statystyk */
+        /* Stałe podświetlenia tożsamościowe z dołu dla kafelków */
         #card-sth { border-bottom: 2px solid #ff5722 !important; cursor: pointer; transition: 0.2s; }
-        #card-sth:hover { background: rgba(255, 87, 34, 0.1); transform: translateY(-2px); }
+        #card-sth:hover { background: rgba(255, 87, 34, 0.05); transform: translateY(-2px); }
 
         #card-lth { border-bottom: 2px solid #00d2ff !important; cursor: pointer; transition: 0.2s; }
-        #card-lth:hover { background: rgba(0, 210, 255, 0.1); transform: translateY(-2px); }
+        #card-lth:hover { background: rgba(0, 210, 255, 0.05); transform: translateY(-2px); }
+        
+        /* DYNAMICZNE AKCENTY TŁA DLA DOLNEGO PANELU KONTROLNEGO */
+        .panel-profit {
+            background: rgba(42, 239, 24, 0.06) !important;
+            border: 1px solid rgba(42, 239, 24, 0.2) !important;
+            box-shadow: 0 0 15px rgba(42, 239, 24, 0.03);
+        }
+        
+        .panel-loss {
+            background: rgba(255, 59, 48, 0.06) !important;
+            border: 1px solid rgba(255, 59, 48, 0.2) !important;
+            box-shadow: 0 0 15px rgba(255, 59, 48, 0.03);
+        }
         
         /* Podział wykresów pionowych (CryptoQuant Style) */
         #chart-wrapper { display: flex; flex-direction: column; height: 100%; gap: 12px; }
@@ -61,7 +74,6 @@
             <button class="tf-btn active price-toggle" data-series="sth">STH Price</button>
             <button class="tf-btn active price-toggle" data-series="lth">LTH Price</button>
             <span style="width: 1px; height: 16px; background: rgba(255,255,255,0.1); margin: 0 4px; align-self: center;"></span>
-            <!-- Przyciski SOPR działające jako przełącznik wykluczający -->
             <button class="tf-btn sopr-radio" id="btn-sth-sopr" data-series="sth-sopr">STH SOPR</button>
             <button class="tf-btn active sopr-radio" id="btn-lth-sopr" data-series="lth-sopr">LTH SOPR</button>
         </div>
@@ -73,7 +85,6 @@
         </div>
     </div>
 
-    <!-- Popup STH -->
     <div id="sth-modal" class="modal">
         <div class="modal-content">
             <span class="close-btn" id="close-sth-modal">&times;</span>
@@ -84,7 +95,6 @@
         </div>
     </div>
 
-    <!-- Popup LTH -->
     <div id="lth-modal" class="modal">
         <div class="modal-content">
             <span class="close-btn" id="close-lth-modal">&times;</span>
