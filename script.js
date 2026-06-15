@@ -1,7 +1,7 @@
 // --- USTAWIENIA PALETY KOLORÓW ---
 const COLORS = {
     btc: '#ffffff',
-    sth: '#ff5722' // Pomarańczowo-czerwony kolor z oryginalnego wskaźnika CheckOnChain
+    sth: '#ff5722' // Pomarańczowo-czerwony kolor
 };
 
 // --- LOGIKA STREF HALVINGOWYCH/CYKLI (Pine Script) ---
@@ -55,9 +55,13 @@ async function fetchBitstampData() {
         const candles = json.data.ohlc;
 
         for (let i = 0; i < candles.length; i++) {
+            // Zapisujemy pełne dane OHLC dla świec
             allCandles.push({
                 time: parseInt(candles[i].timestamp),
-                value: parseFloat(candles[i].close)
+                open: parseFloat(candles[i].open),
+                high: parseFloat(candles[i].high),
+                low: parseFloat(candles[i].low),
+                close: parseFloat(candles[i].close)
             });
         }
 
@@ -76,14 +80,28 @@ async function fetchSthData() {
     if (!response.ok) throw new Error("Nie znaleziono pliku bazy danych sth-realised-price.json.");
     const json = await response.json();
     
-    // Konwersja formatu daty "YYYY-MM-DD" na Unix Timestamp
     return json.map(item => ({
         time: Math.floor(Date.parse(item.date) / 1000),
         value: item.value
     })).sort((a, b) => a.time - b.time);
 }
 
+// --- OBSŁUGA MODALA (POPUPU) EDUKACYJNEGO ---
+function setupModal() {
+    const modal = document.getElementById('sth-modal');
+    const card = document.getElementById('card-sth');
+    const closeBtn = document.getElementById('close-modal');
+
+    card.addEventListener('click', () => { modal.style.display = 'flex'; });
+    closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+    window.addEventListener('click', (e) => {
+        if (e.target === modal) modal.style.display = 'none';
+    });
+}
+
 async function init() {
+    setupModal(); // Uruchomienie obsługi okienka
+
     try {
         const [seriesBTC, seriesSTH] = await Promise.all([
             fetchBitstampData(),
@@ -93,21 +111,11 @@ async function init() {
         if (seriesBTC.length === 0 || seriesSTH.length === 0) throw new Error("Błąd ładowania serii danych.");
 
         const formatUSD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-        const latestBTC = seriesBTC[seriesBTC.length - 1].value;
+        const latestBTC = seriesBTC[seriesBTC.length - 1].close;
         const latestSTH = seriesSTH[seriesSTH.length - 1].value;
 
         document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
         document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
-        
-        // Aktualizacja logiki: Zysk gdy Cena BTC > STH Realised Price
-        const statusElement = document.getElementById('val-status');
-        if (latestBTC > latestSTH) {
-            statusElement.innerText = "ZYSK (Bullish)";
-            statusElement.style.color = "#2aef18";
-        } else {
-            statusElement.innerText = "STRATA (Bearish)";
-            statusElement.style.color = "#ff3b30";
-        }
 
         document.getElementById('loading').style.display = 'none';
         document.getElementById('controls-bar').style.display = 'flex';
@@ -120,7 +128,7 @@ async function init() {
                 layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#8e8e93', fontFamily: 'Inter, sans-serif' },
                 grid: { vertLines: { color: 'rgba(255, 255, 255, 0.04)' }, horzLines: { color: 'rgba(255, 255, 255, 0.04)' } },
                 rightPriceScale: { mode: LightweightCharts.PriceScaleMode.Normal, borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
-                leftPriceScale: { visible: false }, // Wyłączamy lewą oś, bo oba wykresy są w USD
+                leftPriceScale: { visible: false }, 
                 timeScale: { borderVisible: false, timeVisible: true, fixLeftEdge: true, fixRightEdge: true },
                 crosshair: { mode: LightweightCharts.CrosshairMode.Normal, vertLine: { color: 'rgba(255, 255, 255, 0.2)', width: 1, style: 3 }, horzLine: { color: 'rgba(255, 255, 255, 0.2)', width: 1, style: 3 } }
             });
@@ -152,11 +160,24 @@ async function init() {
             zoneSeries.setData(zoneData);
             zoneSeries.applyOptions({ visible: false }); 
 
-            // --- SERIA 1: CENA BTC (Prawa oś) ---
+            // --- SERIA 1A: CENA BTC JAKO LINIA ---
             const lineBTC = chart.addLineSeries({ priceScaleId: 'right', color: COLORS.btc, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-            lineBTC.setData(seriesBTC);
+            // Mapowanie OHLC do prostej linii (wykorzystujemy cenę zamknięcia)
+            lineBTC.setData(seriesBTC.map(c => ({ time: c.time, value: c.close })));
 
-            // --- SERIA 2: STH REALISED PRICE (Też prawa oś!) ---
+            // --- SERIA 1B: CENA BTC JAKO ŚWIECE ---
+            const candleBTC = chart.addCandlestickSeries({
+                priceScaleId: 'right',
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                borderVisible: false,
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350',
+                visible: false // Domyslnie wyłączone
+            });
+            candleBTC.setData(seriesBTC);
+
+            // --- SERIA 2: STH REALISED PRICE ---
             const lineSTH = chart.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
             lineSTH.setData(seriesSTH);
 
@@ -164,7 +185,7 @@ async function init() {
 
             // --- OBSŁUGA INTERAKTYWNEGO TOOLTIPA ---
             const toolTip = document.getElementById('tv-tooltip');
-            const mapBTC = new Map(seriesBTC.map(p => [p.time, p.value]));
+            const mapBTC = new Map(seriesBTC.map(p => [p.time, p.close])); // Używamy ceny Close do tooltipa
             const mapSTH = new Map(seriesSTH.map(p => [p.time, p.value]));
 
             chart.subscribeCrosshairMove(param => {
@@ -178,7 +199,10 @@ async function init() {
                 let html = `<div class="tooltip-date">${dateStr}</div>`;
                 let showTooltip = false;
 
-                if (lineBTC.options().visible && mapBTC.has(timeSec)) {
+                // Pokazujemy cenę z mapy, niezależnie czy włączone są świece czy linia
+                const isBtcVisible = lineBTC.options().visible || candleBTC.options().visible;
+
+                if (isBtcVisible && mapBTC.has(timeSec)) {
                     html += `<div class="tooltip-row"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${COLORS.btc};"></span><span class="tooltip-label">Cena BTC</span></span> <span class="tooltip-value">${formatUSD.format(mapBTC.get(timeSec))}</span></div>`;
                     showTooltip = true;
                 }
@@ -200,18 +224,52 @@ async function init() {
             });
 
             // --- OBSŁUGA PANELU KONTROLNEGO ---
-            const controls = { 'btc': [lineBTC], 'sth': [lineSTH] };
+            
+            // Logika dla włączania/wyłączania całego Bitcoina z panelu dolnego (gdy użytkownik ma włączone świece i klika 'Cena BTC')
+            const btnBtc = document.querySelector('[data-series="btc"]');
+            btnBtc.addEventListener('click', function() {
+                const isActive = this.classList.contains('active');
+                if (isActive) {
+                    this.classList.remove('active'); 
+                    lineBTC.applyOptions({ visible: false });
+                    candleBTC.applyOptions({ visible: false });
+                } else {
+                    this.classList.add('active'); 
+                    if (isCandleMode) candleBTC.applyOptions({ visible: true });
+                    else lineBTC.applyOptions({ visible: true });
+                }
+            });
 
-            document.querySelectorAll('.toggle-btn').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const key = this.getAttribute('data-series');
-                    const isActive = this.classList.contains('active');
-                    if (isActive) {
-                        this.classList.remove('active'); controls[key].forEach(l => l.applyOptions({ visible: false }));
+            // Logika dla STH
+            const btnSth = document.querySelector('[data-series="sth"]');
+            btnSth.addEventListener('click', function() {
+                const isActive = this.classList.contains('active');
+                if (isActive) {
+                    this.classList.remove('active'); lineSTH.applyOptions({ visible: false });
+                } else {
+                    this.classList.add('active'); lineSTH.applyOptions({ visible: true });
+                }
+            });
+
+            // PRZEŁĄCZNIK: LINIA / ŚWIECE
+            let isCandleMode = false;
+            document.getElementById('toggle-candle').addEventListener('click', function() {
+                isCandleMode = !isCandleMode;
+                // Zamieniamy tekst przycisku
+                this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
+                
+                // Jeśli wykres BTC jest w ogóle włączony, przełączamy warstwy
+                if (btnBtc.classList.contains('active')) {
+                    if (isCandleMode) {
+                        this.classList.add('active');
+                        lineBTC.applyOptions({ visible: false });
+                        candleBTC.applyOptions({ visible: true });
                     } else {
-                        this.classList.add('active'); controls[key].forEach(l => l.applyOptions({ visible: true }));
+                        this.classList.remove('active');
+                        candleBTC.applyOptions({ visible: false });
+                        lineBTC.applyOptions({ visible: true });
                     }
-                });
+                }
             });
 
             let isZonesOn = false;
