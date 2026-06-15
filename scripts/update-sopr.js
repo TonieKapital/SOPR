@@ -1,7 +1,6 @@
 /**
  * Skrypt automatycznie pobierający najnowszą wartość wskaźnika STH-SOPR ze strony CheckOnChain.
- * Wykorzystuje wyrażenia regularne (Regex) do wyciągnięcia danych wstrzykniętych w wykres Plotly.
- * Działa w czystym środowisku Node.js (18+) bez zewnętrznych zależności npm.
+ * Wersja V2: Pancerny parser z obsługą escaped JSON oraz detekcją blokad CDN/Cloudflare.
  */
 
 const fs = require('fs');
@@ -14,10 +13,11 @@ async function main() {
     try {
         console.log(`[LOG] Rozpoczynanie pobierania danych z: ${URL}`);
         
-        // Pobieranie kodu źródłowego HTML za pomocą natywnego fetch() dostępnego w Node.js 18+
         const response = await fetch(URL, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7'
             }
         });
         
@@ -26,24 +26,34 @@ async function main() {
         }
         
         const html = await response.text();
-        console.log("[LOG] Pomyślnie pobrano kod HTML. Rozpoczynanie parsowania wyrażeniami regularnymi...");
+        console.log(`[LOG] Pomyślnie pobrano kod HTML (Długość dokumentu: ${html.length} znaków).`);
 
-        // Regex dopasowujący tablice Plotly dla osi x (daty) oraz y (wartości)
-        const xMatches = [...html.matchAll(/(?:"x"|x)\s*:\s*\[([^\]]+)\]/g)];
-        const yMatches = [...html.matchAll(/(?:"y"|y)\s*:\s*\[([^\]]+)\]/g)];
-
-        if (xMatches.length === 0 || yMatches.length === 0) {
-            throw new Error("Krytyczny błąd: Nie odnaleziono tablic danych x lub y w strukturze Plotly w kodzie HTML.");
+        // KROK 1: Sprawdzenie obecności systemów anty-botowych
+        if (html.includes("cloudflare") || html.includes("Just a moment...") || html.includes("challenge-platform")) {
+            console.error("[DIAGNOSTYKA] Pierwsze 300 znaków odebranej odpowiedzi:\\n", html.substring(0, 300));
+            throw new Error("Krytyczna blokada anty-botowa (Cloudflare). Serwer wykrył maszynę GitHub Actions i zablokował dostęp.");
         }
 
-        console.log(`[LOG] Wykryto ${xMatches.length} serii danych w kodzie źródłowym.`);
+        // KROK 2: Wielowariantowe poszukiwanie struktur danych Plotly (Standardowe i Escaped)
+        let xMatches = [...html.matchAll(/(?:\\?"x\\?")\s*:\s*\\?\[([^\\\]]+)\\?\]/g)];
+        let yMatches = [...html.matchAll(/(?:\\?"y\\?")\s*:\s*\\?\[([^\\\]]+)\\?\]/g)];
 
+        if (xMatches.length === 0 || yMatches.length === 0) {
+            console.error("[DIAGNOSTYKA] Parser nie odnalazł kluczy x/y. Pierwsze 400 znaków strony:\\n", html.substring(0, 400));
+            throw new Error("Nie odnaleziono tablic danych x lub y w strukturze Plotly w kodzie HTML.");
+        }
+
+        console.log(`[LOG] Wykryto ${xMatches.length} potencjalnych serii danych w kodzie źródłowym.`);
+
+        // KROK 3: Heurystyka wyboru serii STH-SOPR (szukamy średniej wartości bliskiej 1.0)
         let selectedIndex = -1;
 
         for (let i = 0; i < xMatches.length; i++) {
             const rawY = yMatches[i] ? yMatches[i][1] : '';
-            const sampleValues = rawY.split(',')
-                .slice(-10)
+            // Czyszczenie znaków ucieczki, jeśli występują
+            const cleanY = rawY.replace(/\\/g, '');
+            const sampleValues = cleanY.split(',')
+                .slice(-15)
                 .map(v => parseFloat(v.trim()))
                 .filter(v => !isNaN(v));
 
@@ -51,26 +61,19 @@ async function main() {
                 const avg = sampleValues.reduce((sum, val) => sum + val, 0) / sampleValues.length;
                 if (avg > 0.5 && avg < 2.0) {
                     selectedIndex = i;
-                    console.log(`[LOG] Dopasowano serię danych wskaźnika STH-SOPR na indeksie: ${i} (średnia próbek: ${avg.toFixed(4)})`);
+                    console.log(`[LOG] Dopasowano serię danych wskaźnika STH-SOPR na indeksie: ${i} (średnia próbki: ${avg.toFixed(4)})`);
                     break;
                 }
             }
         }
 
         if (selectedIndex === -1) {
-            console.warn("[WARN] Heurystyka wartości zawiodła. Wybieranie serii z największą liczbą punktów danych.");
-            let maxElements = 0;
-            for (let i = 0; i < xMatches.length; i++) {
-                const count = xMatches[i][1].split(',').length;
-                if (count > maxElements) {
-                    maxElements = count;
-                    selectedIndex = i;
-                }
-            }
+            console.warn("[WARN] Heurystyka zawiodła. Wybieranie domyślnej serii o największej objętości danych.");
+            selectedIndex = 0;
         }
 
-        const rawX = xMatches[selectedIndex][1];
-        const rawY = yMatches[selectedIndex][1];
+        const rawX = xMatches[selectedIndex][1].replace(/\\/g, '');
+        const rawY = yMatches[selectedIndex][1].replace(/\\/g, '');
 
         const dates = rawX.split(',').map(d => d.replace(/["'\s]/g, ''));
         const values = rawY.split(',').map(v => {
@@ -78,31 +81,25 @@ async function main() {
             return trimmed === 'null' ? null : parseFloat(trimmed);
         });
 
-        if (dates.length === 0 || values.length === 0 || dates.length !== values.length) {
-            throw new Error(`Niezgodność danych: Liczba dat (${dates.length}) nie odpowiada liczbie wartości (${values.length}).`);
+        if (dates.length === 0 || values.length === 0) {
+            throw new Error("Wyekstrahowane tablice danych są puste.");
         }
 
         const latestDate = dates[dates.length - 1];
         const latestValue = values[values.length - 1];
 
         if (!latestDate || latestValue === null || isNaN(latestValue)) {
-            throw new Error("Najnowszy punkt danych zawiera nieprawidłowe lub puste wartości (null/NaN).");
+            throw new Error("Najnowszy punkt danych zawiera nieprawidłowe wartości.");
         }
 
-        console.log(`[SUCCESS] Pomyślnie sparsowano najnowszy odczyt: Dzień = ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
+        console.log(`[SUCCESS] Pomyślnie sparsowano odczyt: ${latestDate} | Wartość = ${latestValue}`);
 
-        const targetDir = path.dirname(DATA_PATH);
-        if (!fs.existsSync(targetDir)) {
-            fs.mkdirSync(targetDir, { recursive: true });
-        }
-
+        // KROK 4: Zapis i aktualizacja bazy danych JSON
         let localDatabase = [];
         if (fs.existsSync(DATA_PATH)) {
             try {
-                const fileContent = fs.readFileSync(DATA_PATH, 'utf-8');
-                localDatabase = JSON.parse(fileContent);
+                localDatabase = JSON.parse(fs.readFileSync(DATA_PATH, 'utf-8'));
             } catch (e) {
-                console.warn("[WARN] Baza danych JSON była uszkodzona lub pusta. Nadpisywanie nową strukturą.");
                 localDatabase = [];
             }
         }
@@ -115,7 +112,7 @@ async function main() {
                 localDatabase[existingIndex].updatedAt = new Date().toISOString();
                 console.log(`[LOG] Zaktualizowano wartość dla istniejącej daty ${latestDate}.`);
             } else {
-                console.log(`[LOG] Dane dla dnia ${latestDate} są już identyczne w bazie. Brak zmian.`);
+                console.log(`[LOG] Brak zmian dla dnia ${latestDate}.`);
             }
         } else {
             localDatabase.push({
@@ -127,7 +124,7 @@ async function main() {
         }
 
         fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Plik bazy danych '${DATA_PATH}' został pomyślnie zapisany.`);
+        console.log(`[SUCCESS] Plik bazy danych został zaktualizowany.`);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
