@@ -17,13 +17,10 @@ async function main() {
         const page = await browser.newPage();
         console.log(`[LOG] Nawiązywanie połączenia z: ${URL}`);
         
-        // Zwiększamy bufor czasowy na całkowite rozładowanie i rozpakowanie binarne przez Plotly
         await page.goto(URL, { waitUntil: 'networkidle0', timeout: 60000 });
-        
-        console.log(`[LOG] Strona załadowana. Skanowanie wyrenderowanych obiektów Plotly...`);
+        console.log(`[LOG] Strona załadowana. Wyciąganie i scalanie danych Plotly...`);
 
         const result = await page.evaluate(() => {
-            // Agresywne szukanie wykresu: szukamy domyślnej klasy, lub jakiegokolwiek div'a z danymi
             let plotDiv = document.querySelector('.js-plotly-plot');
             if (!plotDiv || !plotDiv.data) {
                 const allDivs = document.querySelectorAll('div');
@@ -35,60 +32,57 @@ async function main() {
                 }
             }
 
-            if (!plotDiv || !plotDiv.data) {
-                return { error: "Krytyczny błąd: Wirtualna przeglądarka nie wykryła żadnego aktywnego wykresu Plotly w strukturze strony." };
-            }
+            if (!plotDiv || !plotDiv.data) return { error: "Brak wykresu Plotly." };
 
             const traces = plotDiv.data;
-            let latestDate = null;
-            let latestValue = null;
-            let maxTimestamp = -1;
 
-            // Zapisujemy nazwy wszystkich wykrytych linii na wypadek błędu diagnostycznego
-            let availableNames = traces.map(t => t.name || 'unnamed_trace');
-
-            traces.forEach(trace => {
-                let name = trace.name ? trace.name.toUpperCase() : "";
-                
-                // Szerokie, niewrażliwe na wielkość liter wyszukiwanie słowa 'SOPR'
-                if (name.includes('SOPR')) {
-                    const xArr = trace.x;
-                    const yArr = trace.y;
-                    
-                    if (xArr && yArr && xArr.length === yArr.length) {
-                        // Skanujemy od końca, omijając puste miejsca rynkowe (nulle)
-                        for (let i = yArr.length - 1; i >= 0; i--) {
-                            if (yArr[i] !== null && yArr[i] !== undefined && !isNaN(yArr[i])) {
-                                let dateStr = String(xArr[i]);
-                                let time = new Date(dateStr).getTime();
-                                
-                                // Jeśli punkt jest prawidłowy chronologicznie, zapisujemy go
-                                if (!isNaN(time) && time > maxTimestamp) {
-                                    maxTimestamp = time;
-                                    // Ucinamy formatowanie z daty zostawiając czyste YYYY-MM-DD
-                                    latestDate = dateStr.split('T')[0].split(' ')[0];
-                                    latestValue = parseFloat(yArr[i]);
-                                }
-                                break;
-                            }
-                        }
-                    }
+            // 1. Zabezpieczamy główną oś czasu z najdłuższej linii (np. Price)
+            let masterX = [];
+            traces.forEach(t => {
+                if (t.x && t.x.length > masterX.length) {
+                    masterX = t.x;
                 }
             });
 
-            if (latestDate) {
-                return { date: latestDate, value: latestValue, debug: availableNames };
+            // 2. Łapiemy obie części rozbitego wskaźnika STH-SOPR
+            const traceHigh = traces.find(t => t.name && t.name.includes('STH-SOPR > 1'));
+            const traceLow = traces.find(t => t.name && t.name.includes('STH-SOPR < 1'));
+
+            if (!masterX.length || (!traceHigh && !traceLow)) {
+                return { error: "Wykres nie zawiera pełnej osi dat lub śladów STH-SOPR." };
             }
-            return { error: `Algorytm nie wyłapał liczb. Dostępne na wykresie linie to: [${availableNames.join(' | ')}]` };
+
+            let latestDate = null;
+            let latestValue = null;
+
+            // 3. Odwrócona pętla - szukamy ostatniego dnia z fizyczną wartością
+            for (let i = masterX.length - 1; i >= 0; i--) {
+                let valHigh = traceHigh && traceHigh.y ? traceHigh.y[i] : null;
+                let valLow = traceLow && traceLow.y ? traceLow.y[i] : null;
+
+                let val = null;
+                // Wybieramy wartość z tej linii, która nie jest pusta w tym konkretnym dniu
+                if (valHigh !== null && valHigh !== undefined && !isNaN(valHigh)) val = valHigh;
+                else if (valLow !== null && valLow !== undefined && !isNaN(valLow)) val = valLow;
+
+                if (val !== null) {
+                    let dateStr = String(masterX[i]);
+                    latestDate = dateStr.split('T')[0].split(' ')[0]; // Zostawiamy YYYY-MM-DD
+                    latestValue = parseFloat(val);
+                    break;
+                }
+            }
+
+            if (latestDate) return { date: latestDate, value: latestValue };
+            return { error: "Nie znaleziono liczb w połączonych śladach SOPR." };
         });
 
         if (result.error) {
             throw new Error(result.error);
         }
 
-        console.log(`[SUCCESS] Dane wyciągnięte bezbłędnie z przeglądarki!`);
-        console.log(`[SUCCESS] Znalezione linie na wykresie: ${result.debug.join(', ')}`);
-        console.log(`[SUCCESS] Najnowszy punkt rynkowy: Dzień = ${result.date} | Wartość STH-SOPR = ${result.value}`);
+        console.log(`[SUCCESS] Dane pobrane i scalone pomyślnie!`);
+        console.log(`[SUCCESS] Najnowszy punkt: Dzień = ${result.date} | Wartość STH-SOPR = ${result.value}`);
 
         let localDatabase = [];
         if (fs.existsSync(DATA_PATH)) {
@@ -119,7 +113,7 @@ async function main() {
         }
 
         fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Baza danych JSON została pomyślnie zaktualizowana.`);
+        console.log(`[SUCCESS] Baza danych JSON zaktualizowana.`);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
