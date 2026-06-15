@@ -1,6 +1,7 @@
 /**
  * Skrypt automatycznie pobierający najnowszą wartość wskaźnika STH-SOPR ze strony CheckOnChain.
- * Wersja V3: Elastyczny parser z uniwersalnym dopasowaniem tablic tekstowych (x/y) o dużej objętości.
+ * Wersja V4: Ultra-szybki i odporny skrypt bez-regexowy, bazujący na indeksowaniu strumieniowym.
+ * Pozwala na bezbłędne przetwarzanie plików HTML o rozmiarach przekraczających 6MB.
  */
 
 const fs = require('fs');
@@ -26,51 +27,87 @@ async function main() {
         const html = await response.text();
         console.log(`[LOG] Pomyślnie pobrano kod HTML (Długość dokumentu: ${html.length} znaków).`);
 
-        // UNIWERSALNY REGEX: Szuka klucza x/y w cudzysłowach, apostrofach lub bez, a następnie przechwytuje zawartość nawiasu [ ]
-        // Zastosowanie [\s\S]*? pozwala na bezpieczne bezpieczne parsowanie wielolinijkowych struktur tekstowych
-        const xMatches = [...html.matchAll(/(?:"x"|'x'|\bx\b)\s*:\s*\[([\s\S]*?)\]/g)];
-        const yMatches = [...html.matchAll(/(?:"y"|'y'|\by\b)\s*:\s*\[([\s\S]*?)\]/g)];
+        console.log("[LOG] Uruchamianie algorytmu wyszukiwania strumieniowego danych Plotly...");
+        
+        const discoveredSeries = [];
+        let pos = 0;
 
-        if (xMatches.length === 0 || yMatches.length === 0) {
-            throw new Error("Krytyczny błąd: Parser nie dopasował żadnych tablic danych x/y w strukturze wykresu.");
+        // Skanowanie całego dokumentu znak po znaku za pomocą wydajnej metody indexOf
+        while (pos < html.length) {
+            let xIdx = html.indexOf('x', pos);
+            if (xIdx === -1) break;
+
+            // Wyciągamy mały fragment o długości 50 znaków do analizy struktury klucza
+            let segment = html.substring(xIdx, xIdx + 50);
+            let cleanSeg = segment.replace(/[\s"'\\]/g, '');
+
+            // Jeśli fragment po wyczyszczeniu zbędnych znaków zaczyna się od tablicy osi X
+            if (cleanSeg.startsWith('x:[')) {
+                let startBracket = html.indexOf('[', xIdx);
+                if (startBracket !== -1 && startBracket < xIdx + 50) {
+                    let endBracket = html.indexOf(']', startBracket);
+                    if (endBracket !== -1) {
+                        let rawX = html.substring(startBracket + 1, endBracket);
+
+                        // Szukamy powiązanej osi 'y' w bloku tego samego obiektu (maksymalnie 2000 znaków dalej)
+                        let yIdx = html.indexOf('y', endBracket);
+                        if (yIdx !== -1 && yIdx - endBracket < 2000) {
+                            let ySegment = html.substring(yIdx, yIdx + 50);
+                            let cleanYSeg = ySegment.replace(/[\s"'\\]/g, '');
+
+                            if (cleanYSeg.startsWith('y:[')) {
+                                let yStart = html.indexOf('[', yIdx);
+                                let yEnd = html.indexOf(']', yStart);
+                                if (yStart !== -1 && yEnd !== -1) {
+                                    let rawY = html.substring(yStart + 1, yEnd);
+                                    discoveredSeries.push({ rawX, rawY });
+                                    console.log(`[LOG] Zlokalizowano kompletną serię danych wykresu (Pozycja w pliku: ${xIdx})`);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            pos = xIdx + 1;
         }
 
-        console.log(`[LOG] Wykryto ${xMatches.length} serii danych w kodzie źródłowym. Uruchamianie heurystyki...`);
+        if (discoveredSeries.length === 0) {
+            throw new Error("Krytyczny błąd: Algorytm skanowania strumieniowego nie wyodrębnił serii danych x/y.");
+        }
+
+        console.log(`[LOG] Przetworzono dokument. Wykryto serii: ${discoveredSeries.length}. Uruchamianie heurystyki STH-SOPR...`);
 
         let selectedIndex = -1;
 
-        // Przeszukiwanie serii w celu zlokalizowania wskaźnika SOPR (wartości oscylujące wokół 1.0)
-        for (let i = 0; i < xMatches.length; i++) {
-            const rawY = yMatches[i] ? yMatches[i][1] : '';
-            // Czyszczenie spacji, cudzysłowów i ukośników dla poprawnej konwersji typów
-            const cleanY = rawY.replace(/[\s\\"']/g, '');
+        // Filtrowanie serii w celu znalezienia wskaźnika SOPR (wartości wokół poziomu 1.0)
+        for (let i = 0; i < discoveredSeries.length; i++) {
+            const cleanY = discoveredSeries[i].rawY.replace(/[\s\\"']/g, '');
             const sampleValues = cleanY.split(',')
-                .slice(-20) // Analiza ostatnich 20 próbek rynkowych
+                .slice(-20) // Analiza ostatnich 20 wpisów rynkowych
                 .map(v => parseFloat(v))
                 .filter(v => !isNaN(v));
 
             if (sampleValues.length > 0) {
                 const avg = sampleValues.reduce((sum, val) => sum + val, 0) / sampleValues.length;
-                // SOPR krótkoterminowy porusza się w wąskim paśmie makro (0.5 do 2.0)
                 if (avg > 0.5 && avg < 2.0) {
                     selectedIndex = i;
-                    console.log(`[LOG] Sukces heurystyki! Dopasowano wskaźnik STH-SOPR na indeksie serii: ${i} (Średnia próbek: ${avg.toFixed(4)})`);
+                    console.log(`[LOG] Sukces heurystyki! Seria na indeksie ${i} odpowiada charakterystyce STH-SOPR (Średnia: ${avg.toFixed(4)})`);
                     break;
                 }
             }
         }
 
         if (selectedIndex === -1) {
-            console.warn("[WARN] Heurystyka wartości zawiodła. Wybieranie serii o największej objętości punktów.");
+            console.warn("[WARN] Heurystyka zawiodła. Wybieranie pierwszej dostępnej serii danych.");
             selectedIndex = 0;
         }
 
-        // Pobranie i ostateczne oczyszczenie wyekstrahowanych ciągów danych
-        const cleanX = xMatches[selectedIndex][1].replace(/[\s\\"']/g, '');
-        const cleanY = yMatches[selectedIndex][1].replace(/[\s\\"']/g, '');
+        // Oczyszczanie ostatecznych danych z cudzysłowów i spacji
+        const finalX = discoveredSeries[selectedIndex].rawX.replace(/[\s\\"']/g, '');
+        const finalY = discoveredSeries[selectedIndex].rawY.replace(/[\s\\"']/g, '');
 
-        const dates = cleanX.split(',').filter(d => d.length > 0);
-        const values = cleanY.split(',').map(v => v === 'null' ? null : parseFloat(v));
+        const dates = finalX.split(',').filter(d => d.length > 0);
+        const values = finalY.split(',').map(v => v === 'null' ? null : parseFloat(v));
 
         if (dates.length === 0 || values.length === 0 || dates.length !== values.length) {
             throw new Error(`Niezgodność struktur danych. Daty: ${dates.length}, Wartości: ${values.length}`);
@@ -80,7 +117,7 @@ async function main() {
         const latestValue = values[values.length - 1];
 
         if (!latestDate || latestValue === null || isNaN(latestValue)) {
-            throw new Error("Wyciągnięty punkt końcowy zawiera uszkodzone dane.");
+            throw new Error("Wyciągnięty punkt końcowy zawiera uszkodzone lub puste dane.");
         }
 
         console.log(`[SUCCESS] Sparowano najnowszy odczyt: ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
