@@ -1,4 +1,4 @@
-name: Auto Update STH Realised Price
+name: Auto Update STH and LTH Realised Price
 
 on:
   schedule:
@@ -27,21 +27,26 @@ jobs:
       - name: Install Puppeteer
         run: npm install puppeteer
 
-      - name: Execute Scraper Script
+      - name: Scrape STH Data
         run: node scripts/update-sopr.js
+
+      # Dodany krok uruchamiający skrypt dla długoterminowych
+      - name: Scrape LTH Data
+        run: node scripts/update-lth.js
 
       - name: Commit and Push to Repository
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Zmieniono nazwę dodawanego pliku, aby pasowała do STH Realised Price
+          # Dodajemy do bazy oba pliki JSON
           git add data/sth-realised-price.json
+          git add data/lth-realised-price.json
           
           if git diff --cached --quiet; then
             echo "[INFO] Brak nowych modyfikacji. Pomijanie procesu commit/push."
           else
             echo "[INFO] Wykryto nowe dane. Tworzenie commita..."
-            git commit -m "chore(data): automatyczna aktualizacja wskaźnika STH Realised Price [skip ci]"
+            git commit -m "chore(data): automatyczna aktualizacja STH i LTH Realised Price [skip ci]"
             git push origin HEAD:main
           fi
