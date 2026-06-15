@@ -17,36 +17,57 @@ async function main() {
         const page = await browser.newPage();
         console.log(`[LOG] Nawiązywanie połączenia z: ${URL}`);
         
-        // Wchodzimy na stronę i czekamy, aż wykres się załaduje i rozpakuje dane binarne
+        // Zwiększamy bufor czasowy na całkowite rozładowanie i rozpakowanie binarne przez Plotly
         await page.goto(URL, { waitUntil: 'networkidle0', timeout: 60000 });
         
-        console.log(`[LOG] Strona załadowana. Wyciąganie rozpakowanych danych prosto z pamięci RAM Plotly...`);
+        console.log(`[LOG] Strona załadowana. Skanowanie wyrenderowanych obiektów Plotly...`);
 
         const result = await page.evaluate(() => {
-            const plotDiv = document.querySelector('.js-plotly-plot');
-            if (!plotDiv || !plotDiv.data) return { error: "Nie odnaleziono instancji wyrenderowanego wykresu na stronie." };
+            // Agresywne szukanie wykresu: szukamy domyślnej klasy, lub jakiegokolwiek div'a z danymi
+            let plotDiv = document.querySelector('.js-plotly-plot');
+            if (!plotDiv || !plotDiv.data) {
+                const allDivs = document.querySelectorAll('div');
+                for (let div of allDivs) {
+                    if (div.data && Array.isArray(div.data) && div.data.length > 0) {
+                        plotDiv = div;
+                        break;
+                    }
+                }
+            }
+
+            if (!plotDiv || !plotDiv.data) {
+                return { error: "Krytyczny błąd: Wirtualna przeglądarka nie wykryła żadnego aktywnego wykresu Plotly w strukturze strony." };
+            }
 
             const traces = plotDiv.data;
             let latestDate = null;
             let latestValue = null;
             let maxTimestamp = -1;
 
+            // Zapisujemy nazwy wszystkich wykrytych linii na wypadek błędu diagnostycznego
+            let availableNames = traces.map(t => t.name || 'unnamed_trace');
+
             traces.forEach(trace => {
-                // Skupiamy się na liniach nazwanych STH-SOPR (w tym "STH-SOPR > 1" i "< 1")
-                if (trace.name && trace.name.includes('STH-SOPR')) {
+                let name = trace.name ? trace.name.toUpperCase() : "";
+                
+                // Szerokie, niewrażliwe na wielkość liter wyszukiwanie słowa 'SOPR'
+                if (name.includes('SOPR')) {
                     const xArr = trace.x;
                     const yArr = trace.y;
                     
                     if (xArr && yArr && xArr.length === yArr.length) {
+                        // Skanujemy od końca, omijając puste miejsca rynkowe (nulle)
                         for (let i = yArr.length - 1; i >= 0; i--) {
                             if (yArr[i] !== null && yArr[i] !== undefined && !isNaN(yArr[i])) {
-                                let dateStr = xArr[i];
+                                let dateStr = String(xArr[i]);
                                 let time = new Date(dateStr).getTime();
                                 
-                                if (time > maxTimestamp) {
+                                // Jeśli punkt jest prawidłowy chronologicznie, zapisujemy go
+                                if (!isNaN(time) && time > maxTimestamp) {
                                     maxTimestamp = time;
-                                    latestDate = dateStr.split('T')[0]; // Formatowanie daty do YYYY-MM-DD
-                                    latestValue = yArr[i];
+                                    // Ucinamy formatowanie z daty zostawiając czyste YYYY-MM-DD
+                                    latestDate = dateStr.split('T')[0].split(' ')[0];
+                                    latestValue = parseFloat(yArr[i]);
                                 }
                                 break;
                             }
@@ -56,17 +77,18 @@ async function main() {
             });
 
             if (latestDate) {
-                return { date: latestDate, value: latestValue };
+                return { date: latestDate, value: latestValue, debug: availableNames };
             }
-            return { error: "Algorytm nie odnalazł odpowiedniej linii danych STH-SOPR." };
+            return { error: `Algorytm nie wyłapał liczb. Dostępne na wykresie linie to: [${availableNames.join(' | ')}]` };
         });
 
         if (result.error) {
             throw new Error(result.error);
         }
 
-        console.log(`[SUCCESS] Dane wyekstrahowane bezbłędnie z przeglądarki!`);
-        console.log(`[SUCCESS] Najnowszy punkt: Dzień = ${result.date} | Wartość STH-SOPR = ${result.value}`);
+        console.log(`[SUCCESS] Dane wyciągnięte bezbłędnie z przeglądarki!`);
+        console.log(`[SUCCESS] Znalezione linie na wykresie: ${result.debug.join(', ')}`);
+        console.log(`[SUCCESS] Najnowszy punkt rynkowy: Dzień = ${result.date} | Wartość STH-SOPR = ${result.value}`);
 
         let localDatabase = [];
         if (fs.existsSync(DATA_PATH)) {
