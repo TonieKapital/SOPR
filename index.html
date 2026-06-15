@@ -57,13 +57,13 @@
             <button class="tf-btn" id="toggle-log">Skala BTC: Log</button>
             <button class="tf-btn" id="toggle-zones">Nałóż cykl</button>
             <span style="width: 1px; height: 16px; background: rgba(255,255,255,0.1); margin: 0 4px; align-self: center;"></span>
-            <button class="tf-btn active toggle-btn" data-series="btc">Cena BTC</button>
-            <button class="tf-btn active toggle-btn" data-series="sth">STH Price</button>
-            <button class="tf-btn active toggle-btn" data-series="lth">LTH Price</button>
+            <button class="tf-btn active price-toggle" data-series="btc">Cena BTC</button>
+            <button class="tf-btn active price-toggle" data-series="sth">STH Price</button>
+            <button class="tf-btn active price-toggle" data-series="lth">LTH Price</button>
             <span style="width: 1px; height: 16px; background: rgba(255,255,255,0.1); margin: 0 4px; align-self: center;"></span>
-            <!-- Rozbite przyciski SOPR: LTH aktywny domyślnie, STH wyłączony -->
-            <button class="tf-btn toggle-btn" data-series="sth-sopr">STH SOPR</button>
-            <button class="tf-btn active toggle-btn" data-series="lth-sopr">LTH SOPR</button>
+            <!-- Przyciski SOPR działające jako przełącznik wykluczający -->
+            <button class="tf-btn sopr-radio" id="btn-sth-sopr" data-series="sth-sopr">STH SOPR</button>
+            <button class="tf-btn active sopr-radio" id="btn-lth-sopr" data-series="lth-sopr">LTH SOPR</button>
         </div>
 
         <div id="chart-wrapper" style="display: none;">
