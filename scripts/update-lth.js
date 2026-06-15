@@ -44,7 +44,12 @@ async function main() {
                         for (let i = 0; i < yArr.length; i++) {
                             if (yArr[i] !== null && !isNaN(yArr[i])) {
                                 let dateStr = String(xArr[i]).split('T')[0];
-                                soprMap[dateStr] = parseFloat(yArr[i]);
+                                let val = parseFloat(yArr[i]);
+                                
+                                // NAPRAWA: Zapobiegamy nadpisywaniu struktury przez bazy 1.0 dla LTH
+                                if (soprMap[dateStr] === undefined || val !== 1.0) {
+                                    soprMap[dateStr] = val;
+                                }
                             }
                         }
                     }
