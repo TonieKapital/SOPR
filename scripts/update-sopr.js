@@ -17,7 +17,7 @@ async function main() {
         const page = await browser.newPage();
         console.log(`[LOG] Nawiązywanie połączenia z: ${URL}`);
         
-        // Wchodzimy na stronę i czekamy, aż wykres się załaduje i rozpakuje dane
+        // Wchodzimy na stronę i czekamy, aż wykres się załaduje i rozpakuje dane binarne
         await page.goto(URL, { waitUntil: 'networkidle0', timeout: 60000 });
         
         console.log(`[LOG] Strona załadowana. Wyciąganie rozpakowanych danych prosto z pamięci RAM Plotly...`);
@@ -32,6 +32,7 @@ async function main() {
             let maxTimestamp = -1;
 
             traces.forEach(trace => {
+                // Skupiamy się na liniach nazwanych STH-SOPR (w tym "STH-SOPR > 1" i "< 1")
                 if (trace.name && trace.name.includes('STH-SOPR')) {
                     const xArr = trace.x;
                     const yArr = trace.y;
@@ -44,7 +45,7 @@ async function main() {
                                 
                                 if (time > maxTimestamp) {
                                     maxTimestamp = time;
-                                    latestDate = dateStr.split('T')[0];
+                                    latestDate = dateStr.split('T')[0]; // Formatowanie daty do YYYY-MM-DD
                                     latestValue = yArr[i];
                                 }
                                 break;
