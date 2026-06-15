@@ -17,8 +17,13 @@ async function main() {
         const page = await browser.newPage();
         console.log(`[LOG] Nawiązywanie połączenia z: ${URL}`);
         
-        await page.goto(URL, { waitUntil: 'networkidle0', timeout: 60000 });
-        console.log(`[LOG] Strona załadowana. Mapowanie wirtualnych osi Plotly...`);
+        // Zmiana taktyki: czekamy na wyciszenie sieci, a następnie wymuszamy 5 sekund twardego snu
+        // Daje to pewność, że ciężkie skrypty Plotly zdążą rozpakować binarne wartości
+        await page.goto(URL, { waitUntil: 'networkidle2', timeout: 60000 });
+        console.log(`[LOG] Sieć wyciszona. Oczekiwanie 5 sekund na wewnętrzną dekompresję JS...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        console.log(`[LOG] Uruchamianie SONDY PAMIĘCI RAM...`);
 
         const result = await page.evaluate(() => {
             let plotDiv = document.querySelector('.js-plotly-plot');
@@ -32,100 +37,56 @@ async function main() {
                 }
             }
 
-            if (!plotDiv || !plotDiv.data) return { error: "Brak wykresu Plotly na stronie." };
+            if (!plotDiv || !plotDiv.data) return { error: "Brak wykresu Plotly w pamięci DOM." };
 
             const traces = plotDiv.data;
-            let candidates = [];
-            
-            // 1. Zabezpieczamy "Master Axis" (najdłuższą oś czasu na całym wykresie)
-            let masterX = [];
-            traces.forEach(t => {
-                if (t.x && t.x.length > masterX.length) {
-                    masterX = t.x;
-                }
-            });
+            let report = [];
 
-            if (masterX.length === 0) return { error: "Nie odnaleziono głównej osi czasu na wykresie." };
+            traces.forEach((t, i) => {
+                let name = t.name || `Trace_${i}`;
+                // Interesują nas tylko główne linie, w tym cena i SOPR
+                if (name.includes('SOPR') || name.includes('Price')) {
+                    let xLen = t.x ? t.x.length : 0;
+                    let yLen = t.y ? t.y.length : 0;
+                    let xType = t.x ? t.x.constructor.name : 'Brak osi X';
+                    let yType = t.y ? t.y.constructor.name : 'Brak osi Y';
 
-            // 2. Przeszukujemy linie SOPR i parujemy je z Master Axis
-            traces.forEach(trace => {
-                let name = trace.name ? trace.name.toUpperCase() : "";
-                
-                if (name.includes('SOPR')) {
-                    const yArr = trace.y;
-                    // Jeśli linia SOPR nie ma swoich dat (optymalizacja Plotly), używamy masterX
-                    const xArr = (trace.x && trace.x.length > 0) ? trace.x : masterX;
-                    
-                    if (yArr && xArr) {
-                        // Skanujemy od końca by ominąć przyszłe paddingi (nulle, NaN)
-                        for (let i = yArr.length - 1; i >= 0; i--) {
-                            let y = yArr[i];
-                            // Akceptujemy tylko poprawne, niepuste liczby
-                            if (y !== null && y !== undefined && y !== '' && !isNaN(y)) {
-                                let dateStr = String(xArr[i]);
-                                let time = new Date(dateStr).getTime();
-                                
-                                if (!isNaN(time)) {
-                                    candidates.push({
-                                        date: dateStr.split('T')[0].split(' ')[0], // Format YYYY-MM-DD
-                                        value: parseFloat(y),
-                                        time: time
-                                    });
-                                    break; // Mamy najnowszy punkt dla tej linii, idziemy do kolejnej
+                    let lastValidY = [];
+                    let lastValidX = [];
+
+                    // Próbujemy wyciągnąć 3 ostatnie fizyczne liczby z osi Y i dopasowane do nich daty
+                    if (t.y && t.y.length > 0) {
+                        for(let j = t.y.length - 1; j >= 0; j--) {
+                            if(t.y[j] !== null && t.y[j] !== undefined) {
+                                lastValidY.push(t.y[j]);
+                                if (t.x && t.x[j]) {
+                                    lastValidX.push(t.x[j]);
+                                } else {
+                                    lastValidX.push("UNDEFINED");
                                 }
+                                if (lastValidY.length === 3) break;
                             }
                         }
                     }
+
+                    report.push(`[${name}] X: (typ: ${xType}, len: ${xLen}) | Y: (typ: ${yType}, len: ${yLen}) | Ost. daty: ${JSON.stringify(lastValidX)} | Ost. wart: ${JSON.stringify(lastValidY)}`);
                 }
             });
 
-            if (candidates.length > 0) {
-                // Sortujemy od najnowszego (najwyższy timestamp)
-                candidates.sort((a, b) => b.time - a.time);
-                return { date: candidates[0].date, value: candidates[0].value };
-            }
-
-            return { error: "Nie udało się sparować żadnych liczb SOPR z osią czasu." };
+            return { dump: report };
         });
 
         if (result.error) {
             throw new Error(result.error);
         }
 
-        console.log(`[SUCCESS] BINGO! Dane pomyślnie zrekonstruowane i wyciągnięte!`);
-        console.log(`[SUCCESS] Najnowszy punkt z giełdy: Dzień = ${result.date} | Wartość STH-SOPR = ${result.value}`);
-
-        // Zapis do lokalnego JSON-a
-        let localDatabase = [];
-        if (fs.existsSync(DATA_PATH)) {
-            try {
-                localDatabase = JSON.parse(fs.readFileSync(DATA_PATH, 'utf-8'));
-            } catch (e) {
-                localDatabase = [];
-            }
-        }
-
-        const existingIndex = localDatabase.findIndex(item => item.date === result.date);
-
-        if (existingIndex !== -1) {
-            if (localDatabase[existingIndex].value !== result.value) {
-                localDatabase[existingIndex].value = result.value;
-                localDatabase[existingIndex].updatedAt = new Date().toISOString();
-                console.log(`[LOG] Zaktualizowano wartość dla dnia ${result.date}.`);
-            } else {
-                console.log(`[LOG] Dane dla dnia ${result.date} są całkowicie aktualne. Brak zmian.`);
-            }
-        } else {
-            localDatabase.push({
-                date: result.date,
-                value: result.value,
-                updatedAt: new Date().toISOString()
-            });
-            console.log(`[LOG] Dodano nowy rekord rynkowy dla daty: ${result.date}`);
-        }
-
-        fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Baza danych JSON zapisana bezbłędnie.`);
+        console.log(`\n==================== [MEMORY DUMP] ====================`);
+        result.dump.forEach(line => console.log(line));
+        console.log(`=======================================================\n`);
+        
+        // Zatrzymujemy program z błędem celowo, aby zrzucić logi do ekranu Actions
+        console.log(`[CRITICAL ERROR] Praca przerwana celowo. Algorytm zatrzymał się, by wyświetlić zrzut pamięci.`);
+        process.exit(1);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
