@@ -100,4 +100,29 @@ async function main() {
             if (localDatabase[existingIndex].value !== result.value) {
                 localDatabase[existingIndex].value = result.value;
                 localDatabase[existingIndex].updatedAt = new Date().toISOString();
-                console.log(`
+                console.log(`[LOG] Zaktualizowano wartość dla dnia ${result.date}.`);
+            } else {
+                console.log(`[LOG] Dane dla dnia ${result.date} są aktualne. Brak zmian.`);
+            }
+        } else {
+            localDatabase.push({
+                date: result.date,
+                value: result.value,
+                updatedAt: new Date().toISOString()
+            });
+            console.log(`[LOG] Dodano nowy rekord historyczny dla daty: ${result.date}`);
+        }
+
+        fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
+        console.log(`[SUCCESS] Baza danych JSON zapisana bezbłędnie. Zakończono pełnym sukcesem!`);
+
+    } catch (error) {
+        console.error("[CRITICAL ERROR]", error.message);
+        process.exit(1);
+    } finally {
+        await browser.close();
+        console.log(`[LOG] Przeglądarka zamknięta.`);
+    }
+}
+
+main();
