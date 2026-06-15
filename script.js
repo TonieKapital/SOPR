@@ -67,33 +67,15 @@ async function init() {
         const latestSTH = sthPriceRaw[sthPriceRaw.length - 1].value;
         const latestLTH = lthPriceRaw[lthPriceRaw.length - 1].value;
 
-        // Pobieramy najświeższe wartości oscylatorów SOPR do wyliczenia tła panelu
-        const latestSTH_sopr = sthSopr[sthSopr.length - 1].value;
-        const latestLTH_sopr = lthSopr[lthSopr.length - 1].value;
-
         document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
         document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
         document.getElementById('val-sth').style.color = latestSTH < latestBTC ? COLORS.text_profit : COLORS.text_loss;
         document.getElementById('val-lth').innerText = formatUSD.format(latestLTH);
         document.getElementById('val-lth').style.color = latestLTH < latestBTC ? COLORS.text_profit : COLORS.text_loss;
 
-        const controlsBar = document.getElementById('controls-bar');
         document.getElementById('loading').style.display = 'none';
-        controlsBar.style.display = 'flex';
+        document.getElementById('controls-bar').style.display = 'flex';
         document.getElementById('chart-wrapper').style.display = 'flex';
-
-        // NAPRAWIONA FUNKCJA: Prawidłowe wywołanie classList.add()
-        function updatePanelBackground(soprValue) {
-            controlsBar.classList.remove('panel-profit', 'panel-loss');
-            if (soprValue >= 1.0) {
-                controlsBar.classList.add('panel-profit');
-            } else {
-                controlsBar.classList.add('panel-loss');
-            }
-        }
-
-        // Domyślnie na starcie włączony jest LTH SOPR, więc ustawiamy jego stan tła
-        updatePanelBackground(latestLTH_sopr);
 
         // --- WYKRES 1: WYKRES GŁÓWNY (CENA) ---
         const containerMain = document.getElementById('chart-main');
@@ -141,18 +123,41 @@ async function init() {
         lineSTH_S.createPriceLine(priceLineConfig);
         lineLTH_S.createPriceLine(priceLineConfig);
 
-        // --- SYNCHRONIZACJA OSI OSI CZASU ---
+        // DYNAMICZNE RYSOWANIE POZIOMEGO TŁA (ZYSK/STRATA) W LOCIE
+        function updateChartBackground() {
+            const activeSeries = lineLTH_S.options().visible ? lineLTH_S : lineSTH_S;
+            const coordinate = activeSeries.priceToCoordinate(1.0);
+            if (coordinate === null) return;
+
+            const containerHeight = containerSopr.clientHeight;
+            const percentage = (coordinate / containerHeight) * 100;
+
+            // Malujemy tło kontenera: góra zielona (0.04), dół czerwona (0.05) odcięte idealnie na linii bazy
+            containerSopr.style.background = `linear-gradient(to bottom, 
+                rgba(42, 239, 24, 0.04) 0%, 
+                rgba(42, 239, 24, 0.04) ${percentage}%, 
+                rgba(255, 59, 48, 0.05) ${percentage}%, 
+                rgba(255, 59, 48, 0.05) 100%)`;
+        }
+
+        // --- SYNCHRONIZACJA OSI ORAZ AKTUALIZACJA POZIOMEGO TŁA ---
         let isSyncing = false;
         chartMain.timeScale().subscribeVisibleTimeRangeChange(range => {
             if (isSyncing || !range) return; isSyncing = true;
             chartSopr.timeScale().setVisibleRange(range); isSyncing = false;
+            requestAnimationFrame(updateChartBackground);
         });
         chartSopr.timeScale().subscribeVisibleTimeRangeChange(range => {
             if (isSyncing || !range) return; isSyncing = true;
             chartMain.timeScale().setVisibleRange(range); isSyncing = false;
+            requestAnimationFrame(updateChartBackground);
         });
 
+        // Nasłuchiwanie zmian rozmiaru okna, by tło dopasowało się do nowej wysokości
+        new ResizeObserver(() => { requestAnimationFrame(updateChartBackground); }).observe(containerSopr);
+
         chartMain.timeScale().fitContent();
+        setTimeout(updateChartBackground, 100); // Pierwsze wyrenderowanie tła po załadowaniu skali
 
         // --- INTERAKTYWNY TOOLTIP SONDY ---
         const toolTip = document.getElementById('tv-tooltip');
@@ -216,13 +221,13 @@ async function init() {
         document.querySelector('[data-series="sth"]').addEventListener('click', function() { lineSTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         document.querySelector('[data-series="lth"]').addEventListener('click', function() { lineLTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         
-        // --- KONTROLA PANELU DOLNEGO (RADIO BUTTONS) ---
+        // --- KONTROLA PANELU DOLNEGO: TRYB EKSKLUZYWNY (RADIO BUTTONS) ---
         document.getElementById('btn-sth-sopr').addEventListener('click', function() {
             this.classList.add('active');
             document.getElementById('btn-lth-sopr').classList.remove('active');
             lineSTH_S.applyOptions({ visible: true });
             lineLTH_S.applyOptions({ visible: false });
-            updatePanelBackground(latestSTH_sopr);
+            setTimeout(updateChartBackground, 50); // Przelicz tło dla nowej skali STH
         });
 
         document.getElementById('btn-lth-sopr').addEventListener('click', function() {
@@ -230,10 +235,10 @@ async function init() {
             document.getElementById('btn-sth-sopr').classList.remove('active');
             lineLTH_S.applyOptions({ visible: true });
             lineSTH_S.applyOptions({ visible: false });
-            updatePanelBackground(latestLTH_sopr);
+            setTimeout(updateChartBackground, 50); // Przelicz tło dla nowej skali LTH
         });
 
-        // --- PRZYCISKI POMOCNICZE (ZAMKNIĘCIE KODU) ---
+        // --- PRZYCISKI POMOCNICZE ---
         let isCandleMode = false;
         document.getElementById('toggle-candle').addEventListener('click', function() {
             isCandleMode = !isCandleMode; this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
@@ -244,6 +249,7 @@ async function init() {
         document.getElementById('toggle-log').addEventListener('click', function() {
             const log = this.classList.toggle('active');
             chartMain.applyOptions({ rightPriceScale: { mode: log ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal } });
+            setTimeout(updateChartBackground, 50);
         });
 
     } catch (err) { console.error("Krytyczny błąd UI:", err); }
