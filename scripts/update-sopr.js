@@ -4,26 +4,6 @@ const path = require('path');
 const URL = 'https://charts.checkonchain.com/btconchain/realised/sthsopr_indicator/sthsopr_indicator_light.html';
 const DATA_PATH = path.join(__dirname, '../data/sth-sopr.json');
 
-// Precyzyjne wycinanie zawartości tablicy [ ] z uwzględnieniem głębokości nawiasów
-function extractArrayAt(html, startPos) {
-    let startBracket = html.indexOf('[', startPos);
-    if (startBracket === -1 || (startBracket - startPos) > 30) return null;
-    
-    let depth = 1;
-    let endBracket = -1;
-    
-    for (let i = startBracket + 1; i < html.length; i++) {
-        if (html[i] === '[') depth++;
-        else if (html[i] === ']') depth--;
-        
-        if (depth === 0) {
-            endBracket = i;
-            break;
-        }
-    }
-    return endBracket !== -1 ? html.substring(startBracket + 1, endBracket) : null;
-}
-
 async function main() {
     try {
         console.log(`[LOG] Rozpoczynanie pobierania danych z: ${URL}`);
@@ -40,100 +20,90 @@ async function main() {
         
         const html = await response.text();
         console.log(`[LOG] Pomyślnie pobrano kod HTML (Długość: ${html.length} znaków).`);
-        console.log("[LOG] Skanowanie kontekstowe struktur wykresów Plotly...");
+        console.log("[LOG] Uruchamianie Skanera Struktur Płaskich...");
         
-        let pos = 0;
-        const matchingSoprTraces = [];
-        let globalDatesArray = null;
+        const flatArrays = [];
+        let i = 0;
 
-        while (pos < html.length) {
-            let idx = html.indexOf('y', pos);
-            if (idx === -1) break;
+        // Wyciągamy z dokumentu wszystkie niezniszczone, płaskie tablice danych
+        while (i < html.length) {
+            let start = html.indexOf('[', i);
+            if (start === -1) break;
+            let end = html.indexOf(']', start);
+            if (end === -1) break;
             
-            let slice = html.substring(Math.max(0, idx - 5), Math.min(html.length, idx + 20));
-            let cleanSlice = slice.replace(/[\s"'\\]/g, '');
+            let content = html.substring(start + 1, end);
             
-            if (cleanSlice.includes('y:')) {
-                let yContent = extractArrayAt(html, idx);
-                if (yContent && yContent.length > 1000) {
-                    
-                    // Pobieramy kontekst tekstowy wokół tej serii (2500 znaków przed i po)
-                    let contextWindow = html.substring(Math.max(0, idx - 2500), Math.min(html.length, idx + 2500));
-                    
-                    // Sprawdzamy czy w otoczeniu tej serii znajduje się wzmianka o SOPR
-                    if (/sopr|short-term/i.test(contextWindow)) {
-                        const cleanY = yContent.replace(/[\s\\"']/g, '');
-                        const itemsY = cleanY.split(',');
-                        
-                        // Próbujemy wyciągnąć oś czasu (X) z tego samego bloku kontekstowego
-                        let xIdx = contextWindow.indexOf('x:');
-                        if (xIdx === -1) xIdx = contextWindow.indexOf('"x":');
-                        
-                        if (xIdx !== -1) {
-                            let absoluteXIdx = Math.max(0, idx - 2500) + xIdx;
-                            let xContent = extractArrayAt(html, absoluteXIdx);
-                            if (xContent) {
-                                const itemsX = xContent.replace(/[\s\\"']/g, '').split(',').filter(d => d.length > 0);
-                                if (itemsX.length === itemsY.length) {
-                                    globalDatesArray = itemsX;
-                                }
-                            }
-                        }
-                        
-                        matchingSoprTraces.push(itemsY);
-                        console.log(`[LOG] Znaleziono serię powiązaną ze wskaźnikiem SOPR (Liczba punktów: ${itemsY.length})`);
-                    }
-                }
+            // Kryterium płaskiej tablicy: brak obiektów i zagnieżdżonych struktur wewnątrz
+            if (!content.includes('[') && !content.includes('{') && content.length > 1000) {
+                flatArrays.push({
+                    raw: content,
+                    length: content.length
+                });
             }
-            pos = idx + 1;
+            i = end + 1;
         }
 
-        if (matchingSoprTraces.length === 0 || !globalDatesArray) {
-            throw new Error("Krytyczny błąd: Algorytm kontekstowy nie zidentyfikował serii powiązanych ze słowem kluczowym SOPR.");
-        }
+        console.log(`[LOG] Wykryto ${flatArrays.length} długich serii danych. Klasyfikacja matematyczna linii...`);
 
-        console.log(`[LOG] Zlokalizowano segmenty wskaźnika (Suma serii: ${matchingSoprTraces.length}). Scalanie danych w jedną linię bazową...`);
+        let btcDates = null;
+        let soprValues = null;
 
-        // Inteligentne scalanie: Jeśli wykres był podzielony na strefy >1 i <1, łączymy je w jeden nieprzerwany ciąg
-        const finalSoprValues = [];
-        const dataLength = globalDatesArray.length;
-
-        for (let i = 0; i < dataLength; i++) {
-            let mergedValue = null;
+        for (let arr of flatArrays) {
+            let clean = arr.raw.replace(/[\s"'\\]/g, '');
+            let items = clean.split(',');
             
-            for (let trace of matchingSoprTraces) {
-                let rawVal = trace[i];
-                if (rawVal !== undefined && rawVal !== 'null' && rawVal !== '') {
-                    let parsed = parseFloat(rawVal);
-                    if (!isNaN(parsed)) {
-                        mergedValue = parsed;
-                        break;
-                    }
+            if (items.length < 1000) continue; // Ignorujemy mniejsze serie techniczne
+
+            // Wykrywanie serii osi czasu (daty zawierające myślniki formatu YYYY-MM-DD)
+            let isDateArray = items.slice(0, 15).some(item => item.includes('-') && item.length >= 8);
+            
+            if (isDateArray) {
+                if (!btcDates || items.length > btcDates.length) {
+                    btcDates = items; // Zabezpieczamy najdłuższą oś czasu
                 }
+                continue;
             }
-            finalSoprValues.push(mergedValue);
+
+            // Analiza serii numerycznej pod kątem profilu STH-SOPR
+            let numbers = items.map(v => parseFloat(v)).filter(v => !isNaN(v));
+            if (numbers.length === 0) continue;
+
+            let avg = numbers.reduce((sum, val) => sum + val, 0) / numbers.length;
+
+            // Krytyczny filtr profilu: SOPR z definicji makro oscyluje bardzo blisko wartości 1.0
+            if (avg > 0.85 && avg < 1.15) {
+                soprValues = items.map(v => v === 'null' ? null : parseFloat(v));
+                console.log(`[LOG] Sukces klasyfikacji! Zidentyfikowano linię STH-SOPR. Punkty: ${items.length}, Średnia cyklu: ${avg.toFixed(4)}`);
+            }
         }
 
-        // Pętla wsteczna (Backward Scan) poszukująca ostatniego dnia, który nie jest nullem (omijanie przyszłego paddingu)
+        if (!soprValues || !btcDates) {
+            throw new Error("Algorytm klasyfikacji nie dopasował profilu matematycznego wskaźnika SOPR lub osi dat.");
+        }
+
+        // Odwrócone skanowanie pętli w poszukiwaniu najnowszego, realnego zamknięcia dnia (omijamy przyszłe nulle)
         let latestDate = null;
         let latestValue = null;
 
-        for (let i = finalSoprValues.length - 1; i >= 0; i--) {
-            if (finalSoprValues[i] !== null) {
-                latestValue = finalSoprValues[i];
-                latestDate = globalDatesArray[i];
+        for (let idx = soprValues.length - 1; idx >= 0; idx--) {
+            let val = soprValues[idx];
+            if (val !== null && !isNaN(val)) {
+                latestValue = val;
+                // Skrypt dopasowuje indeks daty do struktury wartości
+                latestDate = btcDates[idx] ? btcDates[idx].replace(/["'\s]/g, '') : null;
                 break;
             }
         }
 
         if (!latestDate || latestValue === null) {
-            throw new Error("Błąd agregacji: Zrekonstruowana seria danych nie zawiera poprawnych punktów rynkowych.");
+            throw new Error("Wyciągnięta seria nie zawiera poprawnych punktów danych rynkowych.");
         }
 
-        console.log(`[SUCCESS] Koniec wykresu zidentyfikowany pomyślnie!`);
-        console.log(`[SUCCESS] Najnowszy dzień w sieci: ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
+        console.log(`[SUCCESS] Znaleziono aktualną pozycję wskaźnika!`);
+        console.log(`[SUCCESS] Odczyt: Dzień = ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
 
-        // Zapis do bazy danych JSON
+        // Zapis struktury do pliku bazodanowego JSON
         let localDatabase = [];
         if (fs.existsSync(DATA_PATH)) {
             try {
@@ -149,9 +119,9 @@ async function main() {
             if (localDatabase[existingIndex].value !== latestValue) {
                 localDatabase[existingIndex].value = latestValue;
                 localDatabase[existingIndex].updatedAt = new Date().toISOString();
-                console.log(`[LOG] Zaktualizowano odczyt dla dnia ${latestDate}.`);
+                console.log(`[LOG] Zaktualizowano wartość dla dnia ${latestDate}.`);
             } else {
-                console.log(`[LOG] Wpis dla daty ${latestDate} jest aktualny. Brak zmian.`);
+                console.log(`[LOG] Dane dla dnia ${latestDate} są zbieżne. Brak modyfikacji.`);
             }
         } else {
             localDatabase.push({
@@ -159,11 +129,11 @@ async function main() {
                 value: latestValue,
                 updatedAt: new Date().toISOString()
             });
-            console.log(`[LOG] Pomyślnie dopisano nowy rekord historyczny dla dnia: ${latestDate}`);
+            console.log(`[LOG] Pomyślnie dopisano nowy rekord historyczny dla daty: ${latestDate}`);
         }
 
         fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Plik bazy danych JSON został zaktualizowany.`);
+        console.log(`[SUCCESS] Baza danych JSON została pomyślnie zaktualizowana.`);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
