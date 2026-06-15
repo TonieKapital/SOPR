@@ -18,12 +18,11 @@ async function main() {
         console.log(`[LOG] Nawiązywanie połączenia z: ${URL}`);
         
         await page.goto(URL, { waitUntil: 'networkidle0', timeout: 60000 });
-        console.log(`[LOG] Strona załadowana. Wyciąganie czystych buforów z _fullData...`);
+        console.log(`[LOG] Strona załadowana. Wyciąganie pełnej historii wskaźnika...`);
 
         const result = await page.evaluate(() => {
             let plotDiv = document.querySelector('.js-plotly-plot');
             
-            // Szukamy wyrenderowanego obiektu z właściwością _fullData (rozpakowane tablice)
             if (!plotDiv || !plotDiv._fullData) {
                 const allDivs = document.querySelectorAll('div');
                 for (let div of allDivs) {
@@ -34,82 +33,65 @@ async function main() {
                 }
             }
 
-            if (!plotDiv || !plotDiv._fullData) return { error: "Brak wyrenderowanych danych (_fullData) w pamięci Plotly." };
+            if (!plotDiv || !plotDiv._fullData) return { error: "Brak wyrenderowanych danych (_fullData)." };
 
             const traces = plotDiv._fullData;
-            let candidates = [];
+            let historyMap = {};
 
             traces.forEach(trace => {
                 let name = (trace.name || "").toUpperCase();
                 
-                // Szukamy linii wskaźnika STH-SOPR
+                // Szukamy wszystkich linii SOPR
                 if (name.includes('SOPR')) {
                     let xArr = trace.x;
                     let yArr = trace.y;
                     
                     if (xArr && yArr) {
-                        // Skanujemy od końca odszukując najświeższą narysowaną na ekranie wartość
-                        for (let i = yArr.length - 1; i >= 0; i--) {
+                        // Pobieramy absolutnie każdy punkt historyczny (bez zatrzymywania pętli)
+                        for (let i = 0; i < yArr.length; i++) {
                             let y = yArr[i];
                             if (y !== null && y !== undefined && !isNaN(y)) {
-                                candidates.push({
-                                    date: String(xArr[i]).split('T')[0].split(' ')[0], // czyszczenie daty
-                                    value: parseFloat(y),
-                                    time: new Date(String(xArr[i])).getTime()
-                                });
-                                break;
+                                let dateStr = String(xArr[i]).split('T')[0].split(' ')[0]; 
+                                historyMap[dateStr] = parseFloat(y);
                             }
                         }
                     }
                 }
             });
 
-            if (candidates.length > 0) {
-                // Wybieramy najświeższy punkt ze wszystkich znalezionych fragmentów linii
-                candidates.sort((a, b) => b.time - a.time);
-                return { date: candidates[0].date, value: candidates[0].value };
+            let historyArray = Object.keys(historyMap).map(date => {
+                return { date: date, value: historyMap[date] };
+            });
+
+            if (historyArray.length > 0) {
+                // Sortujemy chronologicznie (od najstarszej do najnowszej)
+                historyArray.sort((a, b) => new Date(a.date) - new Date(b.date));
+                return { history: historyArray };
             }
 
-            return { error: "W rozpakowanych danych _fullData nadal brak liczb." };
+            return { error: "Nie odnaleziono liczb historycznych." };
         });
 
         if (result.error) {
             throw new Error(result.error);
         }
 
-        console.log(`[SUCCESS] BINGO! Pobrano wyrenderowane piksele z pamięci karty graficznej!`);
-        console.log(`[SUCCESS] Najnowszy punkt z giełdy: Dzień = ${result.date} | Wartość STH-SOPR = ${result.value}`);
+        console.log(`[SUCCESS] Pobrano pełną historię! Liczba pobranych dni: ${result.history.length}`);
+        
+        const latest = result.history[result.history.length - 1];
+        console.log(`[SUCCESS] Najnowszy punkt z giełdy: Dzień = ${latest.date} | Wartość = ${latest.value}`);
 
-        let localDatabase = [];
-        if (fs.existsSync(DATA_PATH)) {
-            try {
-                localDatabase = JSON.parse(fs.readFileSync(DATA_PATH, 'utf-8'));
-            } catch (e) {
-                localDatabase = [];
-            }
-        }
+        // Tworzymy finalną bazę danych ze wszystkimi pobranymi punktami
+        const now = new Date().toISOString();
+        const finalDatabase = result.history.map(item => ({
+            date: item.date,
+            value: item.value,
+            updatedAt: now
+        }));
 
-        const existingIndex = localDatabase.findIndex(item => item.date === result.date);
-
-        if (existingIndex !== -1) {
-            if (localDatabase[existingIndex].value !== result.value) {
-                localDatabase[existingIndex].value = result.value;
-                localDatabase[existingIndex].updatedAt = new Date().toISOString();
-                console.log(`[LOG] Zaktualizowano wartość dla dnia ${result.date}.`);
-            } else {
-                console.log(`[LOG] Dane dla dnia ${result.date} są aktualne. Brak zmian.`);
-            }
-        } else {
-            localDatabase.push({
-                date: result.date,
-                value: result.value,
-                updatedAt: new Date().toISOString()
-            });
-            console.log(`[LOG] Dodano nowy rekord historyczny dla daty: ${result.date}`);
-        }
-
-        fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Baza danych JSON zapisana bezbłędnie. Zakończono pełnym sukcesem!`);
+        // Zapis i nadpisanie pliku JSON kompletną historią
+        fs.writeFileSync(DATA_PATH, JSON.stringify(finalDatabase, null, 2), 'utf-8');
+        console.log(`[SUCCESS] Baza danych JSON wypełniona kompletną historią.`);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
