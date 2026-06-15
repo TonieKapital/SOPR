@@ -2,10 +2,8 @@ name: Auto Update STH-SOPR Data
 
 on:
   schedule:
-    # Uruchomienie automatyczne w każdą niedzielę o godzinie 23:00 UTC
     - cron: '0 23 * * 0'
   workflow_dispatch:
-    # Pozwala na ręczne wywołanie skryptu w dowolnym momencie
 
 jobs:
   scrape-and-commit:
@@ -24,7 +22,7 @@ jobs:
       - name: Setup Node.js Runtime
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24' # Zaktualizowano z 20 na 24, aby usunąć ostrzeżenie systemowe
 
       - name: Execute Scraper Script
         run: node scripts/update-sopr.js
