@@ -1,7 +1,9 @@
 // --- USTAWIENIA PALETY KOLORÓW ---
 const COLORS = {
     btc: '#ffffff',
-    sth: '#ff5722' // Pomarańczowo-czerwony kolor
+    sth: '#ff5722',   // Domyślny pomarańczowy, choć wskaźnik będzie dynamicznie dwukolorowy
+    profit: '#2aef18',// Zielony zysk
+    loss: '#ff3b30'   // Czerwona strata
 };
 
 // --- LOGIKA STREF HALVINGOWYCH/CYKLI (Pine Script) ---
@@ -55,7 +57,6 @@ async function fetchBitstampData() {
         const candles = json.data.ohlc;
 
         for (let i = 0; i < candles.length; i++) {
-            // Zapisujemy pełne dane OHLC dla świec
             allCandles.push({
                 time: parseInt(candles[i].timestamp),
                 open: parseFloat(candles[i].open),
@@ -100,22 +101,47 @@ function setupModal() {
 }
 
 async function init() {
-    setupModal(); // Uruchomienie obsługi okienka
+    setupModal(); // Aktywacja okienka popup
 
     try {
-        const [seriesBTC, seriesSTH] = await Promise.all([
+        const [seriesBTC, seriesSTH_raw] = await Promise.all([
             fetchBitstampData(),
             fetchSthData()
         ]);
 
-        if (seriesBTC.length === 0 || seriesSTH.length === 0) throw new Error("Błąd ładowania serii danych.");
+        if (seriesBTC.length === 0 || seriesSTH_raw.length === 0) throw new Error("Błąd ładowania serii danych.");
+
+        // Tworzymy słownik cen BTC do szybkiego malowania wskaźnika STH
+        const btcMap = new Map(seriesBTC.map(c => [c.time, c.close]));
+
+        // Dynamiczne kolorowanie linii STH zyski (Zieleń) / straty (Czerwień)
+        const seriesSTH = seriesSTH_raw.map(pt => {
+            let lineColor = COLORS.sth; // Default
+            if (btcMap.has(pt.time)) {
+                const currentBtcPrice = btcMap.get(pt.time);
+                if (pt.value < currentBtcPrice) {
+                    lineColor = COLORS.profit; // Średnia zakupu poniżej ceny = Zysk (Zieleń)
+                } else {
+                    lineColor = COLORS.loss; // Średnia zakupu powyżej ceny = Strata (Czerwień)
+                }
+            }
+            return {
+                time: pt.time,
+                value: pt.value,
+                color: lineColor
+            };
+        });
 
         const formatUSD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
         const latestBTC = seriesBTC[seriesBTC.length - 1].close;
         const latestSTH = seriesSTH[seriesSTH.length - 1].value;
 
+        // Określamy ostateczny kolor kafelka STH
+        const latestSthColor = latestSTH < latestBTC ? COLORS.profit : COLORS.loss;
+
         document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
         document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
+        document.getElementById('val-sth').style.color = latestSthColor; // Kolorujemy liczbę na kafelku!
 
         document.getElementById('loading').style.display = 'none';
         document.getElementById('controls-bar').style.display = 'flex';
@@ -162,7 +188,6 @@ async function init() {
 
             // --- SERIA 1A: CENA BTC JAKO LINIA ---
             const lineBTC = chart.addLineSeries({ priceScaleId: 'right', color: COLORS.btc, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-            // Mapowanie OHLC do prostej linii (wykorzystujemy cenę zamknięcia)
             lineBTC.setData(seriesBTC.map(c => ({ time: c.time, value: c.close })));
 
             // --- SERIA 1B: CENA BTC JAKO ŚWIECE ---
@@ -177,7 +202,7 @@ async function init() {
             });
             candleBTC.setData(seriesBTC);
 
-            // --- SERIA 2: STH REALISED PRICE ---
+            // --- SERIA 2: STH REALISED PRICE (Z DYNAMICZNYMI KOLORAMI) ---
             const lineSTH = chart.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
             lineSTH.setData(seriesSTH);
 
@@ -185,8 +210,8 @@ async function init() {
 
             // --- OBSŁUGA INTERAKTYWNEGO TOOLTIPA ---
             const toolTip = document.getElementById('tv-tooltip');
-            const mapBTC = new Map(seriesBTC.map(p => [p.time, p.close])); // Używamy ceny Close do tooltipa
-            const mapSTH = new Map(seriesSTH.map(p => [p.time, p.value]));
+            // Zapisujemy całe punkty dla STH (by mieć dostęp do dynamicznego koloru)
+            const mapSTH = new Map(seriesSTH.map(p => [p.time, p]));
 
             chart.subscribeCrosshairMove(param => {
                 if (param.point === undefined || !param.time || param.point.x < 0 || param.point.x > chartContainer.clientWidth || param.point.y < 0 || param.point.y > chartContainer.clientHeight) {
@@ -199,15 +224,17 @@ async function init() {
                 let html = `<div class="tooltip-date">${dateStr}</div>`;
                 let showTooltip = false;
 
-                // Pokazujemy cenę z mapy, niezależnie czy włączone są świece czy linia
                 const isBtcVisible = lineBTC.options().visible || candleBTC.options().visible;
 
-                if (isBtcVisible && mapBTC.has(timeSec)) {
-                    html += `<div class="tooltip-row"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${COLORS.btc};"></span><span class="tooltip-label">Cena BTC</span></span> <span class="tooltip-value">${formatUSD.format(mapBTC.get(timeSec))}</span></div>`;
+                if (isBtcVisible && btcMap.has(timeSec)) {
+                    html += `<div class="tooltip-row"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${COLORS.btc};"></span><span class="tooltip-label">Cena BTC</span></span> <span class="tooltip-value">${formatUSD.format(btcMap.get(timeSec))}</span></div>`;
                     showTooltip = true;
                 }
+                
                 if (lineSTH.options().visible && mapSTH.has(timeSec)) {
-                    html += `<div class="tooltip-row" style="margin-top: 6px;"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${COLORS.sth};"></span><span class="tooltip-label">STH Realised Price</span></span> <span class="tooltip-value">${formatUSD.format(mapSTH.get(timeSec))}</span></div>`;
+                    const sthData = mapSTH.get(timeSec);
+                    // Tooltip używa koloru kropki z danego dnia!
+                    html += `<div class="tooltip-row" style="margin-top: 6px;"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${sthData.color};"></span><span class="tooltip-label">STH Realised Price</span></span> <span class="tooltip-value">${formatUSD.format(sthData.value)}</span></div>`;
                     showTooltip = true;
                 }
 
@@ -225,7 +252,6 @@ async function init() {
 
             // --- OBSŁUGA PANELU KONTROLNEGO ---
             
-            // Logika dla włączania/wyłączania całego Bitcoina z panelu dolnego (gdy użytkownik ma włączone świece i klika 'Cena BTC')
             const btnBtc = document.querySelector('[data-series="btc"]');
             btnBtc.addEventListener('click', function() {
                 const isActive = this.classList.contains('active');
@@ -240,7 +266,6 @@ async function init() {
                 }
             });
 
-            // Logika dla STH
             const btnSth = document.querySelector('[data-series="sth"]');
             btnSth.addEventListener('click', function() {
                 const isActive = this.classList.contains('active');
@@ -251,14 +276,11 @@ async function init() {
                 }
             });
 
-            // PRZEŁĄCZNIK: LINIA / ŚWIECE
             let isCandleMode = false;
             document.getElementById('toggle-candle').addEventListener('click', function() {
                 isCandleMode = !isCandleMode;
-                // Zamieniamy tekst przycisku
                 this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
                 
-                // Jeśli wykres BTC jest w ogóle włączony, przełączamy warstwy
                 if (btnBtc.classList.contains('active')) {
                     if (isCandleMode) {
                         this.classList.add('active');
