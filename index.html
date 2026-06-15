@@ -15,23 +15,16 @@
         #card-lth { border-bottom: 2px solid #00d2ff !important; cursor: pointer; transition: 0.2s; }
         #card-lth:hover { background: rgba(0, 210, 255, 0.05); transform: translateY(-2px); }
         
-        /* DYNAMICZNE AKCENTY TŁA DLA DOLNEGO PANELU KONTROLNEGO */
-        .panel-profit {
-            background: rgba(42, 239, 24, 0.06) !important;
-            border: 1px solid rgba(42, 239, 24, 0.2) !important;
-            box-shadow: 0 0 15px rgba(42, 239, 24, 0.03);
-        }
-        
-        .panel-loss {
-            background: rgba(255, 59, 48, 0.06) !important;
-            border: 1px solid rgba(255, 59, 48, 0.2) !important;
-            box-shadow: 0 0 15px rgba(255, 59, 48, 0.03);
-        }
-        
         /* Podział wykresów pionowych (CryptoQuant Style) */
         #chart-wrapper { display: flex; flex-direction: column; height: 100%; gap: 12px; }
         #chart-main { flex: 65; min-height: 0; position: relative; }
-        #chart-sopr { flex: 35; min-height: 0; position: relative; border-top: 1px solid rgba(255,255,255,0.05); }
+        #chart-sopr { 
+            flex: 35; 
+            min-height: 0; 
+            position: relative; 
+            border-top: 1px solid rgba(255,255,255,0.05);
+            transition: background 0.1s ease; /* Płynne przejście koloru tła przy przeskalowaniu */
+        }
 
         /* Modale informacyjne */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); backdrop-filter: blur(4px); align-items: center; justify-content: center; }
