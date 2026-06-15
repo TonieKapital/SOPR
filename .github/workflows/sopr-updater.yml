@@ -1,4 +1,4 @@
-name: Auto Update STH-SOPR Data
+name: Auto Update STH Realised Price
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   scrape-and-commit:
-    name: Scrape Latest STH-SOPR
+    name: Scrape Latest Data
     runs-on: ubuntu-latest
 
     permissions:
@@ -35,12 +35,13 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          git add data/sth-sopr.json
+          # Zmieniono nazwę dodawanego pliku, aby pasowała do STH Realised Price
+          git add data/sth-realised-price.json
           
           if git diff --cached --quiet; then
-            echo "[INFO] Brak nowych modyfikacji lub danych w pliku JSON. Pomijanie procesu commit/push."
+            echo "[INFO] Brak nowych modyfikacji. Pomijanie procesu commit/push."
           else
-            echo "[INFO] Wykryto nowe dane wskaźnika. Tworzenie commita..."
-            git commit -m "chore(data): automatyczna aktualizacja wskaźnika STH-SOPR [skip ci]"
+            echo "[INFO] Wykryto nowe dane. Tworzenie commita..."
+            git commit -m "chore(data): automatyczna aktualizacja wskaźnika STH Realised Price [skip ci]"
             git push origin HEAD:main
           fi
