@@ -15,7 +15,7 @@
         #card-lth { border-bottom: 2px solid #00d2ff !important; cursor: pointer; transition: 0.2s; }
         #card-lth:hover { background: rgba(0, 210, 255, 0.1); transform: translateY(-2px); }
         
-        /* Struktura podziału na dwa wykresy (CryptoQuant Style) */
+        /* Podział wykresów pionowych (CryptoQuant Style) */
         #chart-wrapper { display: flex; flex-direction: column; height: 100%; gap: 12px; }
         #chart-main { flex: 65; min-height: 0; position: relative; }
         #chart-sopr { flex: 35; min-height: 0; position: relative; border-top: 1px solid rgba(255,255,255,0.05); }
@@ -61,11 +61,12 @@
             <button class="tf-btn active toggle-btn" data-series="sth">STH Price</button>
             <button class="tf-btn active toggle-btn" data-series="lth">LTH Price</button>
             <span style="width: 1px; height: 16px; background: rgba(255,255,255,0.1); margin: 0 4px; align-self: center;"></span>
-            <button class="tf-btn active toggle-btn" data-series="sopr">Wskaźniki SOPR</button>
+            <!-- Rozbite przyciski SOPR: LTH aktywny domyślnie, STH wyłączony -->
+            <button class="tf-btn toggle-btn" data-series="sth-sopr">STH SOPR</button>
+            <button class="tf-btn active toggle-btn" data-series="lth-sopr">LTH SOPR</button>
         </div>
 
         <div id="chart-wrapper" style="display: none;">
-            <!-- Dwa niezależne kontenery na wykresy -->
             <div id="chart-main"></div>
             <div id="chart-sopr"></div>
             <div id="tv-tooltip"></div>
