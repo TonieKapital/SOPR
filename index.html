@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>STH-SOPR Dashboard by Tonie Kapital</title>
+    <title>STH Realised Price Dashboard by Tonie Kapital</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="./style.css">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
@@ -16,9 +16,9 @@
                     <span class="stat-label">CENA BTC (Bitstamp)</span>
                     <span class="stat-value" id="val-btc">Ładowanie...</span>
                 </div>
-                <div class="stat-card stat-sopr">
-                    <span class="stat-label">STH-SOPR</span>
-                    <span class="stat-value" id="val-sopr">Ładowanie...</span>
+                <div class="stat-card stat-sth">
+                    <span class="stat-label">STH REALISED PRICE</span>
+                    <span class="stat-value" id="val-sth">Ładowanie...</span>
                 </div>
                 <div class="stat-card stat-status">
                     <span class="stat-label">STAN RYNKU STH</span>
@@ -28,7 +28,7 @@
         </header>
         
         <div id="loading" class="loading-state">
-            <div class="spinner"></div> Pobieranie historii rynkowej oraz wskaźnika STH-SOPR...
+            <div class="spinner"></div> Pobieranie historii rynkowej oraz wskaźnika STH Realised Price...
         </div>
         
         <div class="timeframe-selector" style="display: none;" id="controls-bar">
@@ -36,7 +36,7 @@
             <button class="tf-btn" id="toggle-zones">Nałóż cykl</button>
             <span style="width: 1px; height: 16px; background: rgba(255,255,255,0.1); margin: 0 4px; align-self: center;"></span>
             <button class="tf-btn active toggle-btn" data-series="btc">Cena BTC</button>
-            <button class="tf-btn active toggle-btn" data-series="sopr">Wskaźnik STH-SOPR</button>
+            <button class="tf-btn active toggle-btn" data-series="sth">STH Realised Price</button>
         </div>
 
         <div id="chart-wrapper" style="display: none;">
