@@ -7,22 +7,67 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="./style.css">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        /* Akcent i interakcja na kafelku STH */
+        #card-sth {
+            border-top: 4px solid #ff5722 !important;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.2s;
+        }
+        #card-sth:hover {
+            background: rgba(255, 87, 34, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        /* Modal (Okienko z wyjaśnieniem) */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-content {
+            background: #1c1c1e;
+            padding: 30px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            max-width: 450px;
+            width: 90%;
+            color: #fff;
+            position: relative;
+        }
+        .close-btn {
+            position: absolute;
+            right: 15px;
+            top: 10px;
+            font-size: 28px;
+            cursor: pointer;
+            color: #8e8e93;
+            transition: 0.2s;
+        }
+        .close-btn:hover { color: #fff; }
+        .modal-content h3 { margin-top: 0; color: #ff5722; font-size: 20px;}
+        .modal-content p { color: #d1d1d6; line-height: 1.6; font-size: 15px; }
+    </style>
 </head>
 <body>
     <div class="dashboard">
         <header class="glass-header">
-            <div class="stats-grid">
+            <div class="stats-grid" style="grid-template-columns: repeat(2, 1fr); max-width: 600px; margin: 0 auto;">
                 <div class="stat-card stat-btc">
                     <span class="stat-label">CENA BTC (Bitstamp)</span>
                     <span class="stat-value" id="val-btc">Ładowanie...</span>
                 </div>
-                <div class="stat-card stat-sth">
-                    <span class="stat-label">STH REALISED PRICE</span>
+                <div class="stat-card stat-sth" id="card-sth" title="Kliknij, by dowiedzieć się więcej">
+                    <span class="stat-label">STH REALISED PRICE <span style="font-size:10px; opacity:0.6;">(Kliknij)</span></span>
                     <span class="stat-value" id="val-sth">Ładowanie...</span>
-                </div>
-                <div class="stat-card stat-status">
-                    <span class="stat-label">STAN RYNKU STH</span>
-                    <span class="stat-value" id="val-status">Ładowanie...</span>
                 </div>
             </div>
         </header>
@@ -32,6 +77,7 @@
         </div>
         
         <div class="timeframe-selector" style="display: none;" id="controls-bar">
+            <button class="tf-btn" id="toggle-candle">Wykres: Świece</button>
             <button class="tf-btn" id="toggle-log">Skala BTC: Log</button>
             <button class="tf-btn" id="toggle-zones">Nałóż cykl</button>
             <span style="width: 1px; height: 16px; background: rgba(255,255,255,0.1); margin: 0 4px; align-self: center;"></span>
@@ -44,6 +90,21 @@
             <div id="tv-tooltip"></div>
         </div>
     </div>
+
+    <div id="sth-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" id="close-modal">&times;</span>
+            <h3>Czym jest STH Realised Price?</h3>
+            <p><strong>To średnia cena zakupu "nowych" inwestorów.</strong><br>
+            Wskaźnik ten oblicza średnią cenę po jakiej zostały zakupione Bitcoiny, które nie leżą w portfelach dłużej niż 155 dni.</p>
+            <p><strong>Jak czytać ten wskaźnik?</strong> Wyobraź sobie, że ta czerwona linia to ich "próg bólu" (wyjście na zero):</p>
+            <ul style="color: #d1d1d6; padding-left: 20px; font-size: 14px; line-height: 1.5;">
+                <li style="margin-bottom: 8px;">Gdy cena BTC jest <strong>powyżej</strong> linii, nowi inwestorzy są w zysku, nastroje są świetne (trwa hossa). Wtedy ta linia często działa jak wsparcie przy spadkach.</li>
+                <li>Gdy cena BTC trwale spada <strong>poniżej</strong> tej linii, nowi inwestorzy zaczynają panikować i sprzedawać ze stratą. Historycznie oznacza to przejście rynku w bessę.</li>
+            </ul>
+        </div>
+    </div>
+
     <script src="./script.js"></script>
 </body>
 </html>
