@@ -93,7 +93,6 @@ async function init() {
         const candleBTC = chartMain.addCandlestickSeries({ priceScaleId: 'right', upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', visible: false });
         candleBTC.setData(seriesBTC);
 
-        // Linie cen mają teraz czyste kolory grup
         const lineSTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
         lineSTH_P.setData(sthPriceRaw);
         const lineLTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
@@ -115,14 +114,18 @@ async function init() {
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
         });
 
-        // STH SOPR domyślnie wyłączone na starcie
+        // STH SOPR domyślnie WYŁĄCZONE na starcie
         const lineSTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false });
         lineSTH_S.setData(sthSopr);
-        // LTH SOPR domyślnie włączone
+        
+        // LTH SOPR domyślnie WŁĄCZONE na starcie
         const lineLTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: true });
         lineLTH_S.setData(lthSopr);
 
-        lineSTH_S.createPriceLine({ price: 1.0, color: 'rgba(255, 255, 255, 0.25)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: 'BAZA 1.0' });
+        // NAPRAWA: Przypisujemy linię bazową do OBU serii, usuwając napis title (zostaje czysta biała metka na osi Y)
+        const priceLineConfig = { price: 1.0, color: 'rgba(255, 255, 255, 0.25)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '' };
+        lineSTH_S.createPriceLine(priceLineConfig);
+        lineLTH_S.createPriceLine(priceLineConfig);
 
         // --- SYNCHRONIZACJA OSI OSI CZASU ---
         let isSyncing = false;
@@ -141,6 +144,8 @@ async function init() {
         const toolTip = document.getElementById('tv-tooltip');
         const mapSTH_P = new Map(sthPriceRaw.map(p => [p.time, p.value]));
         const mapLTH_P = new Map(lthPriceRaw.map(p => [p.time, p.value]));
+        const mapSTH_S = new Map(sthSopr.map(p => [p.time, p.value]));
+        const mapLTH_S = new Map(lthSopr.map(p => [p.time, p.value]));
 
         const handleCrosshairMove = (param) => {
             if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) { toolTip.style.display = 'none'; return; }
@@ -152,7 +157,6 @@ async function init() {
                 html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.btc};"></span>Cena BTC</span><span class="tooltip-value">${formatUSD.format(btcMap.get(t))}</span></div>`;
                 show = true;
             }
-            // Dynamiczne etykiety Zysk/Strata w tekście dla unifikacji kolorów linii
             if (lineSTH_P.options().visible && mapSTH_P.has(t) && btcMap.has(t)) {
                 const val = mapSTH_P.get(t); const isProfit = val < btcMap.get(t);
                 const stateText = isProfit ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
@@ -174,7 +178,7 @@ async function init() {
             if (lineLTH_S.options().visible && mapLTH_S.has(t)) {
                 const val = mapLTH_S.get(t);
                 const stateText = val > 1.0 ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
-                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.lth};"></span>LTH SOPR ${stateText}</span><span class="tooltip-value">${val.toFixed(4)}</span></div>`;
+                html += `<div class="tooltip-row" style="margin-top:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span><span class="tooltip-color-dot" style="background:${COLORS.lth};"></span>LTH SOPR ${stateText}</span><span class="tooltip-value">${val.toFixed(4)}</span></div>`;
                 show = true;
             }
 
@@ -185,12 +189,10 @@ async function init() {
             toolTip.style.left = x + 'px'; toolTip.style.top = (containerMain.getBoundingClientRect().top + window.scrollY + 50) + 'px';
         };
 
-        const mapSTH_S = new Map(sthSopr.map(p => [p.time, p.value]));
-        const mapLTH_S = new Map(lthSopr.map(p => [p.time, p.value]));
         chartMain.subscribeCrosshairMove(handleCrosshairMove);
         chartSopr.subscribeCrosshairMove(handleCrosshairMove);
 
-        // --- OBSŁUGA POJEDYNCZYCH PRZEŁĄCZNIKÓW (ROZBITA LOGIKA) ---
+        // --- KONTROLA PANELU GÓRNEGO (CENY) ---
         const btnBtc = document.querySelector('[data-series="btc"]');
         btnBtc.addEventListener('click', function() {
             const act = this.classList.toggle('active');
@@ -200,15 +202,29 @@ async function init() {
         document.querySelector('[data-series="sth"]').addEventListener('click', function() { lineSTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         document.querySelector('[data-series="lth"]').addEventListener('click', function() { lineLTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         
-        // Całkowicie rozdzielone listenery dolnego paska dla eliminacji płaskiego wykresu
-        document.querySelector('[data-series="sth-sopr"]').addEventListener('click', function() {
-            lineSTH_S.applyOptions({ visible: this.classList.toggle('active') });
+        // --- KONTROLA PANELU DOLNEGO: TRYB EKSKLUZYWNY (RADIO BUTTON) ---
+        const btnSthSopr = document.getElementById('btn-sth-sopr');
+        const btnLthSopr = document.getElementById('btn-lth-lth'); // pobierane przez id
+        
+        document.getElementById('btn-sth-sopr').addEventListener('click', function() {
+            // Włącz STH, wyłącz LTH
+            this.classList.add('active');
+            document.getElementById('btn-lth-sopr').classList.remove('active');
+            
+            lineSTH_S.applyOptions({ visible: true });
+            lineLTH_S.applyOptions({ visible: false });
         });
 
-        document.querySelector('[data-series="lth-sopr"]').addEventListener('click', function() {
-            lineLTH_S.applyOptions({ visible: this.classList.toggle('active') });
+        document.getElementById('btn-lth-sopr').addEventListener('click', function() {
+            // Włącz LTH, wyłącz STH
+            this.classList.add('active');
+            document.getElementById('btn-sth-sopr').classList.remove('active');
+            
+            lineLTH_S.applyOptions({ visible: true });
+            lineSTH_S.applyOptions({ visible: false });
         });
 
+        // --- PRZYCISKI POMOCNICZE ---
         let isCandleMode = false;
         document.getElementById('toggle-candle').addEventListener('click', function() {
             isCandleMode = !isCandleMode; this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
