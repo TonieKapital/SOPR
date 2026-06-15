@@ -24,7 +24,6 @@ jobs:
         with:
           node-version: '24'
 
-      # Kluczowy krok: Instalacja wirtualnej przeglądarki Chrome
       - name: Install Puppeteer
         run: npm install puppeteer
 
