@@ -1,9 +1,10 @@
 // --- USTAWIENIA PALETY KOLORÓW ---
 const COLORS = {
     btc: '#ffffff',
-    sth: '#ff5722',   // Domyślny pomarańczowy, choć wskaźnik będzie dynamicznie dwukolorowy
-    profit: '#2aef18',// Zielony zysk
-    loss: '#ff3b30'   // Czerwona strata
+    sth_profit: '#2aef18', // Neonowy zielony zysk dla STH
+    sth_loss: '#ff3b30',   // Czerwona strata dla STH
+    lth_profit: '#00d2ff', // Jasnoniebieski zysk dla LTH
+    lth_loss: '#0042a5'    // Ciemnoniebieski/granatowa strata dla LTH
 };
 
 // --- LOGIKA STREF HALVINGOWYCH/CYKLI (Pine Script) ---
@@ -39,7 +40,7 @@ function getZoneColor(t) {
 // --- POBIERANIE DANYCH BTC Z BITSTAMP API ---
 async function fetchBitstampData() {
     let allCandles = [];
-    let currentStartUnix = 1313625600; // Dane od 2011 r.
+    let currentStartUnix = 1313625600; 
     let isFetching = true;
 
     while (isFetching) {
@@ -75,73 +76,85 @@ async function fetchBitstampData() {
     return allCandles;
 }
 
-// --- POBIERANIE NOWEGO WSKAŹNIKA Z TWOJEGO PLIKU JSON ---
+// --- POBIERANIE WSKAŹNIKA STH Z PLIKU JSON ---
 async function fetchSthData() {
     const response = await fetch('./data/sth-realised-price.json');
-    if (!response.ok) throw new Error("Nie znaleziono pliku bazy danych sth-realised-price.json.");
+    if (!response.ok) throw new Error("Nie znaleziono pliku sth-realised-price.json.");
     const json = await response.json();
-    
-    return json.map(item => ({
-        time: Math.floor(Date.parse(item.date) / 1000),
-        value: item.value
-    })).sort((a, b) => a.time - b.time);
+    return json.map(item => ({ time: Math.floor(Date.parse(item.date) / 1000), value: item.value })).sort((a, b) => a.time - b.time);
 }
 
-// --- OBSŁUGA MODALA (POPUPU) EDUKACYJNEGO ---
-function setupModal() {
-    const modal = document.getElementById('sth-modal');
-    const card = document.getElementById('card-sth');
-    const closeBtn = document.getElementById('close-modal');
+// --- POBIERANIE WSKAŹNIKA LTH Z PLIKU JSON ---
+async function fetchLthData() {
+    const response = await fetch('./data/lth-realised-price.json');
+    if (!response.ok) throw new Error("Nie znaleziono pliku lth-realised-price.json.");
+    const json = await response.json();
+    return json.map(item => ({ time: Math.floor(Date.parse(item.date) / 1000), value: item.value })).sort((a, b) => a.time - b.time);
+}
 
-    card.addEventListener('click', () => { modal.style.display = 'flex'; });
-    closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+// --- OBSŁUGA OKIENEK POPUP ---
+function setupModals() {
+    const sthModal = document.getElementById('sth-modal');
+    const lthModal = document.getElementById('lth-modal');
+
+    document.getElementById('card-sth').addEventListener('click', () => { sthModal.style.display = 'flex'; });
+    document.getElementById('card-lth').addEventListener('click', () => { lthModal.style.display = 'flex'; });
+
+    document.getElementById('close-sth-modal').addEventListener('click', () => { sthModal.style.display = 'none'; });
+    document.getElementById('close-lth-modal').addEventListener('click', () => { lthModal.style.display = 'none'; });
+
     window.addEventListener('click', (e) => {
-        if (e.target === modal) modal.style.display = 'none';
+        if (e.target === sthModal) sthModal.style.display = 'none';
+        if (e.target === lthModal) lthModal.style.display = 'none';
     });
 }
 
 async function init() {
-    setupModal(); // Aktywacja okienka popup
+    setupModals();
 
     try {
-        const [seriesBTC, seriesSTH_raw] = await Promise.all([
+        // Pobieramy 3 serie danych równolegle
+        const [seriesBTC, seriesSTH_raw, seriesLTH_raw] = await Promise.all([
             fetchBitstampData(),
-            fetchSthData()
+            fetchSthData(),
+            fetchLthData()
         ]);
 
-        if (seriesBTC.length === 0 || seriesSTH_raw.length === 0) throw new Error("Błąd ładowania serii danych.");
+        if (seriesBTC.length === 0 || seriesSTH_raw.length === 0 || seriesLTH_raw.length === 0) throw new Error("Błąd ładowania serii danych.");
 
-        // Tworzymy słownik cen BTC do szybkiego malowania wskaźnika STH
         const btcMap = new Map(seriesBTC.map(c => [c.time, c.close]));
 
-        // Dynamiczne kolorowanie linii STH zyski (Zieleń) / straty (Czerwień)
+        // Dynamiczne kolorowanie serii STH (Zieleń / Czerwień)
         const seriesSTH = seriesSTH_raw.map(pt => {
-            let lineColor = COLORS.sth; // Default
+            let col = '#ff5722';
             if (btcMap.has(pt.time)) {
-                const currentBtcPrice = btcMap.get(pt.time);
-                if (pt.value < currentBtcPrice) {
-                    lineColor = COLORS.profit; // Średnia zakupu poniżej ceny = Zysk (Zieleń)
-                } else {
-                    lineColor = COLORS.loss; // Średnia zakupu powyżej ceny = Strata (Czerwień)
-                }
+                col = pt.value < btcMap.get(pt.time) ? COLORS.sth_profit : COLORS.sth_loss;
             }
-            return {
-                time: pt.time,
-                value: pt.value,
-                color: lineColor
-            };
+            return { time: pt.time, value: pt.value, color: col };
+        });
+
+        // Dynamiczne kolorowanie serii LTH (Jasnoniebieski / Ciemnoniebieski)
+        const seriesLTH = seriesLTH_raw.map(pt => {
+            let col = '#00d2ff';
+            if (btcMap.has(pt.time)) {
+                col = pt.value < btcMap.get(pt.time) ? COLORS.lth_profit : COLORS.lth_loss;
+            }
+            return { time: pt.time, value: pt.value, color: col };
         });
 
         const formatUSD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
         const latestBTC = seriesBTC[seriesBTC.length - 1].close;
         const latestSTH = seriesSTH[seriesSTH.length - 1].value;
+        const latestLTH = seriesLTH[seriesLTH.length - 1].value;
 
-        // Określamy ostateczny kolor kafelka STH
-        const latestSthColor = latestSTH < latestBTC ? COLORS.profit : COLORS.loss;
-
+        // Przypisanie wartości i kolorów do górnych kafelków
         document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
+        
         document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
-        document.getElementById('val-sth').style.color = latestSthColor; // Kolorujemy liczbę na kafelku!
+        document.getElementById('val-sth').style.color = latestSTH < latestBTC ? COLORS.sth_profit : COLORS.sth_loss;
+
+        document.getElementById('val-lth').innerText = formatUSD.format(latestLTH);
+        document.getElementById('val-lth').style.color = latestLTH < latestBTC ? COLORS.lth_profit : COLORS.lth_loss;
 
         document.getElementById('loading').style.display = 'none';
         document.getElementById('controls-bar').style.display = 'flex';
@@ -166,52 +179,37 @@ async function init() {
             }).observe(chartContainer);
 
             // --- STRONA GRAFICZNA: TŁA CYKLI ---
-            const zoneSeries = chart.addHistogramSeries({
-                priceScaleId: 'zones',
-                priceFormat: { type: 'volume' },
-                priceLineVisible: false,
-                lastValueVisible: false,
-                crosshairMarkerVisible: false,
-            });
-
+            const zoneSeries = chart.addHistogramSeries({ priceScaleId: 'zones', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
             chart.priceScale('zones').applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
 
             let zoneData = seriesBTC.map(pt => ({ time: pt.time, value: 1, color: getZoneColor(pt.time) }));
             let lastTime = seriesBTC[seriesBTC.length - 1].time;
             const targetFutureDate = Date.UTC(2028, 0, 1) / 1000;
-            
-            for (let t = lastTime + 86400; t <= targetFutureDate; t += 86400) {
-                zoneData.push({ time: t, value: 1, color: getZoneColor(t) });
-            }
+            for (let t = lastTime + 86400; t <= targetFutureDate; t += 86400) { zoneData.push({ time: t, value: 1, color: getZoneColor(t) }); }
             zoneSeries.setData(zoneData);
             zoneSeries.applyOptions({ visible: false }); 
 
-            // --- SERIA 1A: CENA BTC JAKO LINIA ---
+            // --- SERIE: BITCOIN (LINIA I ŚWIECE) ---
             const lineBTC = chart.addLineSeries({ priceScaleId: 'right', color: COLORS.btc, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
             lineBTC.setData(seriesBTC.map(c => ({ time: c.time, value: c.close })));
 
-            // --- SERIA 1B: CENA BTC JAKO ŚWIECE ---
-            const candleBTC = chart.addCandlestickSeries({
-                priceScaleId: 'right',
-                upColor: '#26a69a',
-                downColor: '#ef5350',
-                borderVisible: false,
-                wickUpColor: '#26a69a',
-                wickDownColor: '#ef5350',
-                visible: false // Domyslnie wyłączone
-            });
+            const candleBTC = chart.addCandlestickSeries({ priceScaleId: 'right', upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', visible: false });
             candleBTC.setData(seriesBTC);
 
-            // --- SERIA 2: STH REALISED PRICE (Z DYNAMICZNYMI KOLORAMI) ---
-            const lineSTH = chart.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+            // --- SERIA: STH REALISED PRICE ---
+            const lineSTH = chart.addLineSeries({ priceScaleId: 'right', lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
             lineSTH.setData(seriesSTH);
+
+            // --- SERIA: LTH REALISED PRICE ---
+            const lineLTH = chart.addLineSeries({ priceScaleId: 'right', lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+            lineLTH.setData(seriesLTH);
 
             chart.timeScale().fitContent();
 
-            // --- OBSŁUGA INTERAKTYWNEGO TOOLTIPA ---
+            // --- TOOLTIP INTERAKTYWNY ---
             const toolTip = document.getElementById('tv-tooltip');
-            // Zapisujemy całe punkty dla STH (by mieć dostęp do dynamicznego koloru)
             const mapSTH = new Map(seriesSTH.map(p => [p.time, p]));
+            const mapLTH = new Map(seriesLTH.map(p => [p.time, p]));
 
             chart.subscribeCrosshairMove(param => {
                 if (param.point === undefined || !param.time || param.point.x < 0 || param.point.x > chartContainer.clientWidth || param.point.y < 0 || param.point.y > chartContainer.clientHeight) {
@@ -224,100 +222,62 @@ async function init() {
                 let html = `<div class="tooltip-date">${dateStr}</div>`;
                 let showTooltip = false;
 
-                const isBtcVisible = lineBTC.options().visible || candleBTC.options().visible;
-
-                if (isBtcVisible && btcMap.has(timeSec)) {
+                if ((lineBTC.options().visible || candleBTC.options().visible) && btcMap.has(timeSec)) {
                     html += `<div class="tooltip-row"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${COLORS.btc};"></span><span class="tooltip-label">Cena BTC</span></span> <span class="tooltip-value">${formatUSD.format(btcMap.get(timeSec))}</span></div>`;
                     showTooltip = true;
                 }
-                
                 if (lineSTH.options().visible && mapSTH.has(timeSec)) {
-                    const sthData = mapSTH.get(timeSec);
-                    // Tooltip używa koloru kropki z danego dnia!
-                    html += `<div class="tooltip-row" style="margin-top: 6px;"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${sthData.color};"></span><span class="tooltip-label">STH Realised Price</span></span> <span class="tooltip-value">${formatUSD.format(sthData.value)}</span></div>`;
+                    const sData = mapSTH.get(timeSec);
+                    html += `<div class="tooltip-row" style="margin-top: 5px;"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${sData.color};"></span><span class="tooltip-label">STH Realised</span></span> <span class="tooltip-value">${formatUSD.format(sData.value)}</span></div>`;
+                    showTooltip = true;
+                }
+                if (lineLTH.options().visible && mapLTH.has(timeSec)) {
+                    const lData = mapLTH.get(timeSec);
+                    html += `<div class="tooltip-row" style="margin-top: 5px;"><span style="display:flex; align-items:center;"><span class="tooltip-color-dot" style="background: ${lData.color};"></span><span class="tooltip-label">LTH Realised</span></span> <span class="tooltip-value">${formatUSD.format(lData.value)}</span></div>`;
                     showTooltip = true;
                 }
 
-                if (!showTooltip && !zoneSeries.options().visible) {
-                    toolTip.style.display = 'none'; return;
-                }
+                if (!showTooltip && !zoneSeries.options().visible) { toolTip.style.display = 'none'; return; }
 
-                toolTip.innerHTML = html;
-                toolTip.style.display = 'block';
-
-                let xPos = param.point.x + 20; 
-                if (xPos + toolTip.offsetWidth > chartContainer.clientWidth - 20) xPos = param.point.x - toolTip.offsetWidth - 20;
+                toolTip.innerHTML = html; toolTip.style.display = 'block';
+                let xPos = param.point.x + 20; if (xPos + toolTip.offsetWidth > chartContainer.clientWidth - 20) xPos = param.point.x - toolTip.offsetWidth - 20;
                 toolTip.style.left = xPos + 'px'; toolTip.style.top = param.point.y + 'px';
             });
 
-            // --- OBSŁUGA PANELU KONTROLNEGO ---
-            
+            // --- PANEL KONTROLNY PANELU DOLNEGO ---
             const btnBtc = document.querySelector('[data-series="btc"]');
             btnBtc.addEventListener('click', function() {
-                const isActive = this.classList.contains('active');
-                if (isActive) {
-                    this.classList.remove('active'); 
-                    lineBTC.applyOptions({ visible: false });
-                    candleBTC.applyOptions({ visible: false });
-                } else {
-                    this.classList.add('active'); 
-                    if (isCandleMode) candleBTC.applyOptions({ visible: true });
-                    else lineBTC.applyOptions({ visible: true });
-                }
+                const act = this.classList.toggle('active');
+                if (isCandleMode) candleBTC.applyOptions({ visible: act }); else lineBTC.applyOptions({ visible: act });
             });
 
-            const btnSth = document.querySelector('[data-series="sth"]');
-            btnSth.addEventListener('click', function() {
-                const isActive = this.classList.contains('active');
-                if (isActive) {
-                    this.classList.remove('active'); lineSTH.applyOptions({ visible: false });
-                } else {
-                    this.classList.add('active'); lineSTH.applyOptions({ visible: true });
-                }
+            document.querySelector('[data-series="sth"]').addEventListener('click', function() {
+                lineSTH.applyOptions({ visible: this.classList.toggle('active') });
+            });
+
+            document.querySelector('[data-series="lth"]').addEventListener('click', function() {
+                lineLTH.applyOptions({ visible: this.classList.toggle('active') });
             });
 
             let isCandleMode = false;
             document.getElementById('toggle-candle').addEventListener('click', function() {
-                isCandleMode = !isCandleMode;
-                this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
-                
+                isCandleMode = !isCandleMode; this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
                 if (btnBtc.classList.contains('active')) {
-                    if (isCandleMode) {
-                        this.classList.add('active');
-                        lineBTC.applyOptions({ visible: false });
-                        candleBTC.applyOptions({ visible: true });
-                    } else {
-                        this.classList.remove('active');
-                        candleBTC.applyOptions({ visible: false });
-                        lineBTC.applyOptions({ visible: true });
-                    }
+                    lineBTC.applyOptions({ visible: !isCandleMode }); candleBTC.applyOptions({ visible: isCandleMode });
                 }
             });
 
-            let isZonesOn = false;
             document.getElementById('toggle-zones').addEventListener('click', function() {
-                isZonesOn = !isZonesOn;
-                if(isZonesOn) {
-                    this.classList.add('active'); zoneSeries.applyOptions({ visible: true });
-                } else {
-                    this.classList.remove('active'); zoneSeries.applyOptions({ visible: false });
-                }
+                zoneSeries.applyOptions({ visible: this.classList.toggle('active') });
             });
 
-            let isLogScale = false; 
             document.getElementById('toggle-log').addEventListener('click', function() {
-                isLogScale = !isLogScale;
-                if(isLogScale) {
-                    this.classList.add('active'); chart.applyOptions({ rightPriceScale: { mode: LightweightCharts.PriceScaleMode.Logarithmic } });
-                } else {
-                    this.classList.remove('active'); chart.applyOptions({ rightPriceScale: { mode: LightweightCharts.PriceScaleMode.Normal } });
-                }
+                const log = this.classList.toggle('active');
+                chart.applyOptions({ rightPriceScale: { mode: log ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal } });
             });
 
         }, 50);
-    } catch (err) {
-        console.error("Krytyczny błąd inicjalizacji wykresu:", err);
-    }
+    } catch (err) { console.error("Błąd wykresu:", err); }
 }
 
 window.addEventListener('DOMContentLoaded', init);
