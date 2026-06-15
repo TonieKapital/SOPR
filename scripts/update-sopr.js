@@ -22,7 +22,7 @@ async function main() {
         console.log(`[LOG] Pomyślnie pobrano kod HTML (Długość: ${html.length} znaków).`);
         console.log("[LOG] Uruchamianie Globalnego Skanera Strumienia Tokenów...");
 
-        // Rozbijamy cały dokument na płaskie elementy
+        // Rozbijamy dokument na płaskie elementy po przeciszczonych przecinkach
         const rawTokens = html.split(',');
         console.log(`[LOG] Wygenerowano ${rawTokens.length} surowych tokenów tekstowych. Rozpoczynanie segmentacji cyklu...`);
 
@@ -30,12 +30,11 @@ async function main() {
         let currentType = null;
         let currentSegment = [];
 
-        // KROK 1: Klasyfikacja i budowanie nieprzerwanych ciągów danych (Date / Number)
         for (let rawToken of rawTokens) {
-            // Oczyszczamy token ze wszystkich znaków strukturalnych JavaScript/JSON
-            let token = rawToken.replace(/[\s"'\\\{\}\[\]]/g, '');
-            // Usuwamy ewentualne przypisania zmiennych typu x:, y:, name:
-            token = token.replace(/^[a-zA-Z0-9_]+:/, '');
+            // PANCERNE OCZYSZCZANIE: Odcinamy wszystko co przed dwukropkiem, nawiasem lub cudzysłowem i czyścimy końcówki
+            let token = rawToken.trim();
+            token = token.replace(/^.*[:\s\[\{"'\\]+/, ''); 
+            token = token.replace(/[\}\]"'\s\\].*$/, '');   
 
             let type = 'other';
             if (/^\d{4}-\d{2}-\d{2}$/.test(token)) {
@@ -58,7 +57,6 @@ async function main() {
             segments.push({ type: currentType, data: currentSegment });
         }
 
-        // KROK 2: Filtrowanie i identyfikacja struktur rynkowych
         const dateSegments = segments.filter(s => s.type === 'date' && s.data.length > 1000);
         const numberSegments = segments.filter(s => s.type === 'number' && s.data.length > 1000);
 
@@ -66,15 +64,14 @@ async function main() {
 
         let soprSegment = null;
 
-        // Szukamy serii liczbowej, która idealnie odpowiada zachowaniu SOPR (średnia blisko 1.0)
         for (let seg of numberSegments) {
             let nums = seg.data.map(v => v === 'null' ? null : parseFloat(v)).filter(v => v !== null && !isNaN(v));
             if (nums.length > 0) {
                 let avg = nums.reduce((sum, val) => sum + val, 0) / nums.length;
-                // STH-SOPR oscyluje stabilnie w kanale wokół wartości neutralnej 1.0
+                // STH-SOPR oscyluje blisko bazy 1.0 (zakres makro 0.85 - 1.15)
                 if (avg > 0.85 && avg < 1.15) {
                     soprSegment = seg;
-                    console.log(`[LOG] Sukces! Zidentyfikowano nieprzerwany ciąg STH-SOPR. Długość: ${seg.data.length}, Średnia cyklu: ${avg.toFixed(4)}`);
+                    console.log(`[LOG] Sukces! Zidentyfikowano ciąg STH-SOPR. Długość: ${seg.data.length}, Średnia cyklu: ${avg.toFixed(4)}`);
                     break;
                 }
             }
@@ -84,21 +81,19 @@ async function main() {
             throw new Error("Krytyczny błąd: Żaden strumień liczb nie spełnia kryteriów matematycznych wskaźnika STH-SOPR.");
         }
 
-        // Dopasowanie osi czasu o identycznej długości
         let matchingDateSeg = dateSegments.find(s => s.data.length === soprSegment.data.length);
         if (!matchingDateSeg && dateSegments.length > 0) {
-            // Fallback do najdłuższego dostępnego ciągu dat w dokumencie
             matchingDateSeg = dateSegments.sort((a, b) => b.data.length - a.data.length)[0];
         }
 
         if (!matchingDateSeg) {
-            throw new Error("Krytyczny błąd: Nie udało się odnaleźć dopasowanej osi czasu dla wyekstrahowanych liczb.");
+            throw new Error("Krytyczny błąd: Nie udało się odnaleźć dopasowanej osi czasu.");
         }
 
-        // KROK 3: Odwrócone skanowanie pętli w celu pobrania najnowszego dnia (omijamy przyszły padding null)
         let latestDate = null;
         let latestValue = null;
 
+        // Pętla od tyłu - łapiemy ostatni dzień pomijając przyszłe nulle
         for (let idx = soprSegment.data.length - 1; idx >= 0; idx--) {
             let rawVal = soprSegment.data[idx];
             if (rawVal !== 'null') {
@@ -112,13 +107,12 @@ async function main() {
         }
 
         if (!latestDate || latestValue === null) {
-            throw new Error("Agregacja strumienia nie zwróciła żadnej poprawnej wartości numerycznej.");
+            throw new Error("Agregacja strumienia nie zwróciła poprawnej wartości numerycznej.");
         }
 
         console.log(`[SUCCESS] Cel osiągnięty! Dane wyciągnięte pomyślnie.`);
         console.log(`[SUCCESS] Najnowszy rekord On-Chain: Dzień = ${latestDate} | Wartość STH-SOPR = ${latestValue}`);
 
-        // KROK 4: Zapis do bazy danych JSON
         let localDatabase = [];
         if (fs.existsSync(DATA_PATH)) {
             try {
@@ -136,7 +130,7 @@ async function main() {
                 localDatabase[existingIndex].updatedAt = new Date().toISOString();
                 console.log(`[LOG] Zaktualizowano wartość dla dnia ${latestDate}.`);
             } else {
-                console.log(`[LOG] Wpis dla dnia ${latestDate} jest w pełni aktualny.`);
+                console.log(`[LOG] Wpis dla dnia ${latestDate} jest aktualny.`);
             }
         } else {
             localDatabase.push({
@@ -148,7 +142,7 @@ async function main() {
         }
 
         fs.writeFileSync(DATA_PATH, JSON.stringify(localDatabase, null, 2), 'utf-8');
-        console.log(`[SUCCESS] Baza danych JSON została pomyślnie zaktualizowana i zapisana.`);
+        console.log(`[SUCCESS] Baza danych JSON została pomyślnie zapisana.`);
 
     } catch (error) {
         console.error("[CRITICAL ERROR]", error.message);
