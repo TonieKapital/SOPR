@@ -8,9 +8,9 @@
     <link rel="stylesheet" href="./style.css">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
     <style>
-        /* Akcent i interakcja na kafelku STH */
+        /* Akcent (podświetlenie z dołu) i interakcja na kafelku STH */
         #card-sth {
-            border-top: 4px solid #ff5722 !important;
+            border-bottom: 2px solid #ff5722 !important;
             cursor: pointer;
             transition: background 0.2s, transform 0.2s;
         }
@@ -60,6 +60,7 @@
 <body>
     <div class="dashboard">
         <header class="glass-header">
+            <!-- Grid ograniczony do 2 kafelków (usunięto Stan Rynku) -->
             <div class="stats-grid" style="grid-template-columns: repeat(2, 1fr); max-width: 600px; margin: 0 auto;">
                 <div class="stat-card stat-btc">
                     <span class="stat-label">CENA BTC (Bitstamp)</span>
@@ -91,17 +92,15 @@
         </div>
     </div>
 
+    <!-- Okienko edukacyjne -->
     <div id="sth-modal" class="modal">
         <div class="modal-content">
             <span class="close-btn" id="close-modal">&times;</span>
-            <h3>Czym jest STH Realised Price?</h3>
-            <p><strong>To średnia cena zakupu "nowych" inwestorów.</strong><br>
-            Wskaźnik ten oblicza średnią cenę po jakiej zostały zakupione Bitcoiny, które nie leżą w portfelach dłużej niż 155 dni.</p>
-            <p><strong>Jak czytać ten wskaźnik?</strong> Wyobraź sobie, że ta czerwona linia to ich "próg bólu" (wyjście na zero):</p>
-            <ul style="color: #d1d1d6; padding-left: 20px; font-size: 14px; line-height: 1.5;">
-                <li style="margin-bottom: 8px;">Gdy cena BTC jest <strong>powyżej</strong> linii, nowi inwestorzy są w zysku, nastroje są świetne (trwa hossa). Wtedy ta linia często działa jak wsparcie przy spadkach.</li>
-                <li>Gdy cena BTC trwale spada <strong>poniżej</strong> tej linii, nowi inwestorzy zaczynają panikować i sprzedawać ze stratą. Historycznie oznacza to przejście rynku w bessę.</li>
-            </ul>
+            <h3>STH Realised Price</h3>
+            <p><strong>To średnia cena zakupu krótkoterminowych inwestorów.</strong><br>
+            Wskaźnik ten oblicza średnią cenę, po jakiej zostały zakupione Bitcoiny, które nie leżą w portfelach dłużej niż 155 dni.</p>
+            <p><strong>Jak to czytać?</strong><br>
+            Gdy obecna cena Bitcoina znajduje się <strong>powyżej</strong> tej linii – inwestorzy są w zysku (linia staje się <span style="color:#2aef18; font-weight:bold;">zielona</span>). Gdy cena Bitcoina spada <strong>poniżej</strong> – inwestorzy są na stracie (linia staje się <span style="color:#ff3b30; font-weight:bold;">czerwona</span>).</p>
         </div>
     </div>
 
