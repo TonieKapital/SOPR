@@ -1,8 +1,8 @@
 // --- JEDNOLITA PALETA KOLORÓW TOŻSAMOŚCIOWYCH ---
 const COLORS = {
     btc: '#ffffff',
-    sth: '#ff5722',      // Stały pomarańczowy dla grupy STH
-    lth: '#00d2ff',      // Stały błękitny dla grupy LTH
+    sth: '#ff5722',         // Stały pomarańczowy dla grupy STH
+    lth: '#00d2ff',         // Stały błękitny dla grupy LTH
     text_profit: '#2aef18', // Neonowa zieleń do akcentowania zysku w napisach
     text_loss: '#ff3b30'    // Czerwień do akcentowania straty w napisach
 };
@@ -82,17 +82,17 @@ async function init() {
         controlsBar.style.display = 'flex';
         document.getElementById('chart-wrapper').style.display = 'flex';
 
-        // Funkcja do dynamicznej zmiany tła całego panelu na dole
+        // NAPRAWIONA FUNKCJA: Prawidłowe wywołanie classList.add()
         function updatePanelBackground(soprValue) {
             controlsBar.classList.remove('panel-profit', 'panel-loss');
             if (soprValue >= 1.0) {
-                controlsBar.add('panel-profit');
+                controlsBar.classList.add('panel-profit');
             } else {
-                controlsBar.add('panel-loss');
+                controlsBar.classList.add('panel-loss');
             }
         }
 
-        // Domyslnie na starcie włączony jest LTH SOPR, więc ustawiamy jego stan tła
+        // Domyślnie na starcie włączony jest LTH SOPR, więc ustawiamy jego stan tła
         updatePanelBackground(latestLTH_sopr);
 
         // --- WYKRES 1: WYKRES GŁÓWNY (CENA) ---
@@ -154,7 +154,7 @@ async function init() {
 
         chartMain.timeScale().fitContent();
 
-        // --- INTERAKTNYWNY TOOLTIP SONDY ---
+        // --- INTERAKTYWNY TOOLTIP SONDY ---
         const toolTip = document.getElementById('tv-tooltip');
         const mapSTH_P = new Map(sthPriceRaw.map(p => [p.time, p.value]));
         const mapLTH_P = new Map(lthPriceRaw.map(p => [p.time, p.value]));
@@ -216,13 +216,13 @@ async function init() {
         document.querySelector('[data-series="sth"]').addEventListener('click', function() { lineSTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         document.querySelector('[data-series="lth"]').addEventListener('click', function() { lineLTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
         
-        // --- KONTROLA PANELU DOLNEGO: TRYB EKSKLUZYWNY (RADIO BUTTON) + AKTUALIZACJA TŁA ---
+        // --- KONTROLA PANELU DOLNEGO (RADIO BUTTONS) ---
         document.getElementById('btn-sth-sopr').addEventListener('click', function() {
             this.classList.add('active');
             document.getElementById('btn-lth-sopr').classList.remove('active');
             lineSTH_S.applyOptions({ visible: true });
             lineLTH_S.applyOptions({ visible: false });
-            updatePanelBackground(latestSTH_sopr); // Zmień kolor tła na stan STH
+            updatePanelBackground(latestSTH_sopr);
         });
 
         document.getElementById('btn-lth-sopr').addEventListener('click', function() {
@@ -230,10 +230,10 @@ async function init() {
             document.getElementById('btn-sth-sopr').classList.remove('active');
             lineLTH_S.applyOptions({ visible: true });
             lineSTH_S.applyOptions({ visible: false });
-            updatePanelBackground(latestLTH_sopr); // Zmień kolor tła na stan LTH
+            updatePanelBackground(latestLTH_sopr);
         });
 
-        // --- PRZYCISKI POMOCNICZE ---
+        // --- PRZYCISKI POMOCNICZE (ZAMKNIĘCIE KODU) ---
         let isCandleMode = false;
         document.getElementById('toggle-candle').addEventListener('click', function() {
             isCandleMode = !isCandleMode; this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
