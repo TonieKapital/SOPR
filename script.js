@@ -82,4 +82,180 @@ async function init() {
         const latestLTH = lthPriceRaw[lthPriceRaw.length - 1].value;
 
         document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
-        document.getElementById('val-sth').innerText = formatUSD.
+        document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
+        document.getElementById('val-sth').style.color = latestSTH < latestBTC ? COLORS.text_profit : COLORS.text_loss;
+        document.getElementById('val-lth').innerText = formatUSD.format(latestLTH);
+        document.getElementById('val-lth').style.color = latestLTH < latestBTC ? COLORS.text_profit : COLORS.text_loss;
+
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('controls-bar').style.display = 'flex';
+        document.getElementById('chart-wrapper').style.display = 'flex';
+
+        // --- WYKRES MAIN ---
+        const containerMain = document.getElementById('chart-main');
+        const chartMain = LightweightCharts.createChart(containerMain, {
+            autoSize: true,
+            layout: { background: { type: 'solid', color: 'rgba(0,0,0,0)' }, textColor: '#8e8e93', fontFamily: 'Inter, sans-serif' },
+            grid: { vertLines: { color: 'rgba(255, 255, 255, 0.03)' }, horzLines: { color: 'rgba(255, 255, 255, 0.03)' } },
+            rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
+            leftPriceScale: { visible: false }, timeScale: { borderVisible: false, visible: false },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
+        });
+
+        const lineBTC = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.btc, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        lineBTC.setData(seriesBTC.map(c => ({ time: c.time, value: c.close })));
+        const candleBTC = chartMain.addCandlestickSeries({ priceScaleId: 'right', upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', visible: false });
+        candleBTC.setData(seriesBTC);
+
+        const lineSTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        lineSTH_P.setData(sthPriceAligned); // Używamy wyrównanych danych
+        const lineLTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        lineLTH_P.setData(lthPriceAligned); // Używamy wyrównanych danych
+
+        const zoneSeries = chartMain.addHistogramSeries({ priceScaleId: 'zones', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        chartMain.priceScale('zones').applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
+        zoneSeries.setData(seriesBTC.map(pt => ({ time: pt.time, value: 1, color: getZoneColor(pt.time) })));
+        zoneSeries.applyOptions({ visible: false });
+
+        // --- WYKRES SOPR ---
+        const containerSopr = document.getElementById('chart-sopr');
+        const chartSopr = LightweightCharts.createChart(containerSopr, {
+            autoSize: true,
+            layout: { background: { type: 'solid', color: 'rgba(0,0,0,0)' }, textColor: '#8e8e93', fontFamily: 'Inter, sans-serif' },
+            grid: { vertLines: { color: 'rgba(255, 255, 255, 0.03)' }, horzLines: { color: 'rgba(255, 255, 255, 0.03)' } },
+            rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
+            leftPriceScale: { visible: false }, timeScale: { borderVisible: false, timeVisible: true },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
+        });
+
+        const lineSTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false });
+        lineSTH_S.setData(sthSoprAligned); // Używamy wyrównanych danych
+        const lineLTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: true });
+        lineLTH_S.setData(lthSoprAligned); // Używamy wyrównanych danych
+
+        const priceLineConfig = { price: 1.0, color: 'rgba(255, 255, 255, 0.25)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '' };
+        lineSTH_S.createPriceLine(priceLineConfig);
+        lineLTH_S.createPriceLine(priceLineConfig);
+
+        function updateChartBackground() {
+            const activeSeries = lineLTH_S.options().visible ? lineLTH_S : lineSTH_S;
+            const coordinate = activeSeries.priceToCoordinate(1.0);
+            if (coordinate === null) return;
+            const containerHeight = containerSopr.clientHeight;
+            const percentage = (coordinate / containerHeight) * 100;
+            containerSopr.style.background = `linear-gradient(to bottom, rgba(42, 239, 24, 0.04) 0%, rgba(42, 239, 24, 0.04) ${percentage}%, rgba(255, 59, 48, 0.05) ${percentage}%, rgba(255, 59, 48, 0.05) 100%)`;
+        }
+
+        let isSyncing = false;
+        chartMain.timeScale().subscribeVisibleTimeRangeChange(range => {
+            if (isSyncing || !range) return; isSyncing = true;
+            chartSopr.timeScale().setVisibleRange(range); isSyncing = false;
+            requestAnimationFrame(updateChartBackground);
+        });
+        chartSopr.timeScale().subscribeVisibleTimeRangeChange(range => {
+            if (isSyncing || !range) return; isSyncing = true;
+            chartMain.timeScale().setVisibleRange(range); isSyncing = false;
+            requestAnimationFrame(updateChartBackground);
+        });
+
+        new ResizeObserver(() => { requestAnimationFrame(updateChartBackground); }).observe(containerSopr);
+
+        const totalPoints = seriesBTC.length;
+        if (totalPoints > 365) {
+            chartMain.timeScale().setVisibleLogicalRange({
+                from: totalPoints - 365,
+                to: totalPoints + 40
+            });
+        }
+
+        setTimeout(updateChartBackground, 150);
+
+        // --- TOOLTIP ---
+        const toolTip = document.getElementById('tv-tooltip');
+        // Do tooltipów używamy danych Raw (bez pustych wstrzykniętych punktów)
+        const mapSTH_P = new Map(sthPriceRaw.map(p => [p.time, p.value]));
+        const mapLTH_P = new Map(lthPriceRaw.map(p => [p.time, p.value]));
+        const mapSTH_S = new Map(sthSopr.map(p => [p.time, p.value]));
+        const mapLTH_S = new Map(lthSopr.map(p => [p.time, p.value]));
+
+        const handleCrosshairMove = (param) => {
+            if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) { toolTip.style.display = 'none'; return; }
+            const t = param.time; const d = new Date(t * 1000);
+            let html = `<div class="tooltip-date">${d.getUTCDate()}.${(d.getUTCMonth()+1).toString().padStart(2,'0')}.${d.getUTCFullYear()}</div>`;
+            let show = false;
+
+            if (btcMap.has(t) && (lineBTC.options().visible || candleBTC.options().visible)) {
+                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.btc};"></span>Cena BTC</span><span class="tooltip-value">${formatUSD.format(btcMap.get(t))}</span></div>`;
+                show = true;
+            }
+            if (lineSTH_P.options().visible && mapSTH_P.has(t) && btcMap.has(t)) {
+                const val = mapSTH_P.get(t); const isProfit = val < btcMap.get(t);
+                const stateText = isProfit ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.sth};"></span>STH Price ${stateText}</span><span class="tooltip-value">${formatUSD.format(val)}</span></div>`;
+                show = true;
+            }
+            if (lineLTH_P.options().visible && mapLTH_P.has(t) && btcMap.has(t)) {
+                const val = mapLTH_P.get(t); const isProfit = val < btcMap.get(t);
+                const stateText = isProfit ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.lth};"></span>LTH Price ${stateText}</span><span class="tooltip-value">${formatUSD.format(val)}</span></div>`;
+                show = true;
+            }
+            if (lineSTH_S.options().visible && mapSTH_S.has(t)) {
+                const val = mapSTH_S.get(t);
+                const stateText = val > 1.0 ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row" style="margin-top:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span><span class="tooltip-color-dot" style="background:${COLORS.sth};"></span>STH SOPR ${stateText}</span><span class="tooltip-value">${val.toFixed(4)}</span></div>`;
+                show = true;
+            }
+            if (lineLTH_S.options().visible && mapLTH_S.has(t)) {
+                const val = mapLTH_S.get(t);
+                const stateText = val > 1.0 ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row" style="margin-top:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span><span class="tooltip-color-dot" style="background:${COLORS.lth};"></span>LTH SOPR ${stateText}</span><span class="tooltip-value">${val.toFixed(4)}</span></div>`;
+                show = true;
+            }
+
+            if (!show) { toolTip.style.display = 'none'; return; }
+            toolTip.innerHTML = html; toolTip.style.display = 'block';
+            let x = param.point.x + 20; if (x + toolTip.offsetWidth > containerMain.clientWidth - 20) x = param.point.x - toolTip.offsetWidth - 20;
+            toolTip.style.left = x + 'px'; toolTip.style.top = (containerMain.getBoundingClientRect().top + window.scrollY + 50) + 'px';
+        };
+
+        chartMain.subscribeCrosshairMove(handleCrosshairMove);
+        chartSopr.subscribeCrosshairMove(handleCrosshairMove);
+
+        const btnBtc = document.querySelector('[data-series="btc"]');
+        btnBtc.addEventListener('click', function() {
+            const act = this.classList.toggle('active');
+            if (isCandleMode) candleBTC.applyOptions({ visible: act }); else lineBTC.applyOptions({ visible: act });
+        });
+
+        document.querySelector('[data-series="sth"]').addEventListener('click', function() { lineSTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
+        document.querySelector('[data-series="lth"]').addEventListener('click', function() { lineLTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
+        
+        document.getElementById('btn-sth-sopr').addEventListener('click', function() {
+            this.classList.add('active'); document.getElementById('btn-lth-sopr').classList.remove('active');
+            lineSTH_S.applyOptions({ visible: true }); lineLTH_S.applyOptions({ visible: false });
+            setTimeout(updateChartBackground, 50);
+        });
+
+        document.getElementById('btn-lth-sopr').addEventListener('click', function() {
+            this.classList.add('active'); document.getElementById('btn-sth-sopr').classList.remove('active');
+            lineLTH_S.applyOptions({ visible: true }); lineSTH_S.applyOptions({ visible: false });
+            setTimeout(updateChartBackground, 50);
+        });
+
+        let isCandleMode = false;
+        document.getElementById('toggle-candle').addEventListener('click', function() {
+            isCandleMode = !isCandleMode; this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
+            if (btnBtc.classList.contains('active')) { lineBTC.applyOptions({ visible: !isCandleMode }); candleBTC.applyOptions({ visible: isCandleMode }); }
+        });
+
+        document.getElementById('toggle-zones').addEventListener('click', function() { zoneSeries.applyOptions({ visible: this.classList.toggle('active') }); });
+        document.getElementById('toggle-log').addEventListener('click', function() {
+            const log = this.classList.toggle('active');
+            chartMain.applyOptions({ rightPriceScale: { mode: log ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal } });
+            setTimeout(updateChartBackground, 50);
+        });
+
+    } catch (err) { console.error("Krytyczny błąd UI:", err); }
+}
+window.addEventListener('DOMContentLoaded', init);
