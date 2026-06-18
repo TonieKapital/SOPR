@@ -239,4 +239,19 @@ async function init() {
             setTimeout(updateChartBackground, 50);
         });
 
-        let isCandle
+        let isCandleMode = false;
+        document.getElementById('toggle-candle').addEventListener('click', function() {
+            isCandleMode = !isCandleMode; this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
+            if (btnBtc.classList.contains('active')) { lineBTC.applyOptions({ visible: !isCandleMode }); candleBTC.applyOptions({ visible: isCandleMode }); }
+        });
+
+        document.getElementById('toggle-zones').addEventListener('click', function() { zoneSeries.applyOptions({ visible: this.classList.toggle('active') }); });
+        document.getElementById('toggle-log').addEventListener('click', function() {
+            const log = this.classList.toggle('active');
+            chartMain.applyOptions({ rightPriceScale: { mode: log ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal } });
+            setTimeout(updateChartBackground, 50);
+        });
+
+    } catch (err) { console.error("Krytyczny błąd UI:", err); }
+}
+window.addEventListener('DOMContentLoaded', init);
