@@ -60,21 +60,27 @@ async function init() {
             loadLocalJson('sth-sopr.json'), loadLocalJson('lth-sopr.json')
         ]);
 
-        // KLUCZOWA ZMIANA: Pobieramy datę startu Bitcoina
-        const btcStartTime = seriesBTC[0].time;
+        // --- KLUCZOWY FIX: MASTER TIMELINE ---
+        // 1. Zbieramy wszystkie daty ze wszystkich zbiorów danych
+        const allTimes = new Set();
+        seriesBTC.forEach(d => allTimes.add(d.time));
+        sthPriceRaw.forEach(d => allTimes.add(d.time));
+        lthPriceRaw.forEach(d => allTimes.add(d.time));
+        sthSoprRaw.forEach(d => allTimes.add(d.time));
+        lthSoprRaw.forEach(d => allTimes.add(d.time));
 
-        // Odrzucamy wszystkie dane On-Chain, które są starsze niż pierwszy dzień z danymi BTC
-        const sthPrice = sthPriceRaw.filter(p => p.time >= btcStartTime);
-        const lthPrice = lthPriceRaw.filter(p => p.time >= btcStartTime);
-        const sthSopr = sthSoprRaw.filter(p => p.time >= btcStartTime);
-        const lthSopr = lthSoprRaw.filter(p => p.time >= btcStartTime);
+        // 2. Tworzymy jedną, wspólną i posortowaną oś czasu
+        const unifiedTimes = Array.from(allTimes).sort((a, b) => a - b);
+        
+        // 3. Przygotowujemy pusty zbiór danych, który wstrzykniemy w tło obu wykresów
+        const dummyData = unifiedTimes.map(t => ({ time: t, value: 0 }));
 
         const btcMap = new Map(seriesBTC.map(c => [c.time, c.close]));
 
         const formatUSD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
         const latestBTC = seriesBTC[seriesBTC.length - 1].close;
-        const latestSTH = sthPrice[sthPrice.length - 1].value;
-        const latestLTH = lthPrice[lthPrice.length - 1].value;
+        const latestSTH = sthPriceRaw[sthPriceRaw.length - 1].value;
+        const latestLTH = lthPriceRaw[lthPriceRaw.length - 1].value;
 
         document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
         document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
@@ -97,15 +103,19 @@ async function init() {
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
         });
 
+        // Ukryty szkielet czasu dla pierwszego wykresu
+        const dummyMain = chartMain.addLineSeries({ visible: false, crosshairMarkerVisible: false, priceLineVisible: false, lastValueVisible: false });
+        dummyMain.setData(dummyData);
+
         const lineBTC = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.btc, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
         lineBTC.setData(seriesBTC.map(c => ({ time: c.time, value: c.close })));
         const candleBTC = chartMain.addCandlestickSeries({ priceScaleId: 'right', upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', visible: false });
         candleBTC.setData(seriesBTC);
 
         const lineSTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-        lineSTH_P.setData(sthPrice); 
+        lineSTH_P.setData(sthPriceRaw); 
         const lineLTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-        lineLTH_P.setData(lthPrice); 
+        lineLTH_P.setData(lthPriceRaw); 
 
         const zoneSeries = chartMain.addHistogramSeries({ priceScaleId: 'zones', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
         chartMain.priceScale('zones').applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
@@ -123,10 +133,14 @@ async function init() {
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
         });
 
+        // Ukryty szkielet czasu dla drugiego wykresu
+        const dummySopr = chartSopr.addLineSeries({ visible: false, crosshairMarkerVisible: false, priceLineVisible: false, lastValueVisible: false });
+        dummySopr.setData(dummyData);
+
         const lineSTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false });
-        lineSTH_S.setData(sthSopr); 
+        lineSTH_S.setData(sthSoprRaw); 
         const lineLTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: true });
-        lineLTH_S.setData(lthSopr); 
+        lineLTH_S.setData(lthSoprRaw); 
 
         const priceLineConfig = { price: 1.0, color: 'rgba(255, 255, 255, 0.25)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '' };
         lineSTH_S.createPriceLine(priceLineConfig);
@@ -157,8 +171,8 @@ async function init() {
 
         new ResizeObserver(() => { requestAnimationFrame(updateChartBackground); }).observe(containerSopr);
 
-        // Ustawienie domyślnego widoku z zapasem po prawej
-        const totalPoints = seriesBTC.length;
+        // Ustawienie domyślnego widoku z zapasem po prawej na bazie Master Timeline
+        const totalPoints = unifiedTimes.length;
         if (totalPoints > 365) {
             chartMain.timeScale().setVisibleLogicalRange({
                 from: totalPoints - 365,
@@ -170,10 +184,10 @@ async function init() {
 
         // --- TOOLTIP ---
         const toolTip = document.getElementById('tv-tooltip');
-        const mapSTH_P = new Map(sthPrice.map(p => [p.time, p.value]));
-        const mapLTH_P = new Map(lthPrice.map(p => [p.time, p.value]));
-        const mapSTH_S = new Map(sthSopr.map(p => [p.time, p.value]));
-        const mapLTH_S = new Map(lthSopr.map(p => [p.time, p.value]));
+        const mapSTH_P = new Map(sthPriceRaw.map(p => [p.time, p.value]));
+        const mapLTH_P = new Map(lthPriceRaw.map(p => [p.time, p.value]));
+        const mapSTH_S = new Map(sthSoprRaw.map(p => [p.time, p.value]));
+        const mapLTH_S = new Map(lthSoprRaw.map(p => [p.time, p.value]));
 
         const handleCrosshairMove = (param) => {
             if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) { toolTip.style.display = 'none'; return; }
