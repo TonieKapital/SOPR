@@ -11,8 +11,8 @@ body {
 
 .dashboard {
     width: 100%; 
-    max-width: 100%; /* Zmiana na 100% - pełny ekran */
-    padding: 16px 20px; /* Zoptymalizowane marginesy */
+    max-width: 100%; /* Zmienione na 100%, aby aplikacja była na cały ekran */
+    padding: 16px 20px; /* Zmniejszone marginesy dla lepszego dopasowania na pełnym ekranie */
     display: flex; flex-direction: column;
     height: 100vh;
 }
@@ -34,9 +34,10 @@ body {
     align-items: center; 
 }
 
+/* Kolory ramek dolnych dopasowane do linii wykresu */
 .stat-btc { border-bottom: 2px solid #ffffff; }
-.stat-sopr { border-bottom: 2px solid #9ff321; } 
-.stat-status { border-bottom: 2px solid #00f0ff; } 
+.stat-sopr { border-bottom: 2px solid #9ff321; } /* Kolor neon-green dla linii SOPR */
+.stat-status { border-bottom: 2px solid #00f0ff; } /* Kolor cyan dla statusu makro */
 
 .stat-label { font-size: 11px; color: #8e8e93; font-weight: 600; letter-spacing: 0.08em; margin-bottom: 8px; text-align: center; text-transform: uppercase;}
 .stat-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -62,6 +63,7 @@ body {
 #chart-wrapper { flex-grow: 1; width: 100%; position: relative; display: flex; flex-direction: column; }
 #chart-main { flex-grow: 1; width: 100%; min-height: 0; position: relative; }
 
+/* Interaktywny Tooltip giełdowy */
 #tv-tooltip {
     width: auto; min-width: 200px; position: absolute; display: none;
     padding: 12px 16px; box-sizing: border-box; font-size: 13px; color: #fff;
@@ -79,6 +81,7 @@ body {
 .spinner { width: 16px; height: 16px; border: 2px solid #8e8e93; border-top: 2px solid transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 10px; }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
+/* Animacje wejścia */
 .stat-card { opacity: 0; }
 .stat-card:nth-child(1) { animation: smoothReveal 0.6s ease 0.1s forwards; }
 .stat-card:nth-child(2) { animation: smoothReveal 0.6s ease 0.2s forwards; }
