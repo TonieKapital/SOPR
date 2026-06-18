@@ -23,7 +23,7 @@ function getZoneColor(t) {
 async function fetchBitstampData() {
     let currentStartUnix = 1313625600; 
     let isFetching = true;
-    const btcMapDedupe = new Map(); // Mapa do eliminacji duplikatów
+    const btcMapDedupe = new Map();
 
     while (isFetching) {
         if (currentStartUnix > Math.floor(Date.now() / 1000)) break;
@@ -34,7 +34,7 @@ async function fetchBitstampData() {
         
         const candles = json.data.ohlc;
         for (let i = 0; i < candles.length; i++) {
-            // FIX 1: Twarda normalizacja czasu na idealną Północ UTC (00:00:00)
+            // Unifikacja czasu giełdy na idealną północ UTC
             let d = new Date(parseInt(candles[i].timestamp) * 1000);
             let utcMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000;
             
@@ -56,28 +56,28 @@ async function loadLocalJson(file) {
     const r = await fetch(`./data/${file}`);
     const j = await r.json();
     return j.map(i => {
-        // FIX 2: Twarda normalizacja czasu danych On-Chain na Północ UTC
+        // Unifikacja czasu danych On-Chain na idealną północ UTC
         let d = new Date(i.date + 'T00:00:00Z');
         let t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000;
         return { time: t, value: i.value };
     }).sort((a,b) => a.time - b.time);
 }
 
-// FIX 3: Funkcja rzeźbiąca dane On-Chain na wzór osi czasu Bitcoina
+// Funkcja synchronizująca dane On-Chain do siatki Bitcoina
 function alignToBtcTimeline(rawData, btcSeries) {
     const dataMap = new Map(rawData.map(p => [p.time, p.value]));
     const aligned = [];
     let lastVal = null;
-    let firstFound = false;
 
     for (const btc of btcSeries) {
         if (dataMap.has(btc.time)) {
-            firstFound = true;
             lastVal = dataMap.get(btc.time);
             aligned.push({ time: btc.time, value: lastVal });
-        } else if (firstFound && lastVal !== null) {
-            // Łatanie ewentualnych luk w danych historycznych, żeby linia była ciągła
+        } else if (lastVal !== null) {
             aligned.push({ time: btc.time, value: lastVal });
+        } else {
+            // Wstawia tzw. whitespace (pusty punkt w czasie), żeby oś X była ciągła
+            aligned.push({ time: btc.time }); 
         }
     }
     return aligned;
@@ -100,7 +100,7 @@ async function init() {
             loadLocalJson('sth-sopr.json'), loadLocalJson('lth-sopr.json')
         ]);
 
-        // Dopasowywanie wszystkich osi do jednego Master Timeline
+        // Dopasowanie wszystkich osi do jednego szablonu
         const sthPrice = alignToBtcTimeline(sthPriceRaw, seriesBTC);
         const lthPrice = alignToBtcTimeline(lthPriceRaw, seriesBTC);
         const sthSopr = alignToBtcTimeline(sthSoprRaw, seriesBTC);
@@ -160,9 +160,14 @@ async function init() {
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
         });
 
-        // FIX 4: Pusta seria kotwicząca, która wymusza budowę osi czasu dolnego wykresu dokładnie pod siatkę BTC
-        const dummySopr = chartSopr.addLineSeries({ visible: false, crosshairMarkerVisible: false, priceLineVisible: false, lastValueVisible: false });
-        dummySopr.setData(seriesBTC.map(c => ({ time: c.time }))); 
+        // 🟢 KLUCZOWY FIX: NIEWIDZIALNA KOTWICA OSI Y
+        // Ta przezroczysta linia biegnie na poziomie 1.0 przez CAŁĄ historię Bitcoina. 
+        // Dzięki temu dolny wykres nigdy nie ma "pustej" osi Y i nigdy się nie zacina.
+        const invisibleAnchor = chartSopr.addLineSeries({
+            color: 'rgba(0,0,0,0)', // Całkowicie niewidzialna
+            lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false
+        });
+        invisibleAnchor.setData(seriesBTC.map(c => ({ time: c.time, value: 1.0 }))); 
 
         const lineSTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false });
         lineSTH_S.setData(sthSopr); 
@@ -198,7 +203,7 @@ async function init() {
 
         new ResizeObserver(() => { requestAnimationFrame(updateChartBackground); }).observe(containerSopr);
 
-        // Ustawienie początkowego widoku dla wygody - brak drastycznych rzutów na 13 lat
+        // Ustawienie początkowego widoku 
         const totalPoints = seriesBTC.length;
         if (totalPoints > 365) {
             chartMain.timeScale().setVisibleLogicalRange({
@@ -211,10 +216,12 @@ async function init() {
 
         // --- TOOLTIP ---
         const toolTip = document.getElementById('tv-tooltip');
-        const mapSTH_P = new Map(sthPrice.map(p => [p.time, p.value]));
-        const mapLTH_P = new Map(lthPrice.map(p => [p.time, p.value]));
-        const mapSTH_S = new Map(sthSopr.map(p => [p.time, p.value]));
-        const mapLTH_S = new Map(lthSopr.map(p => [p.time, p.value]));
+        
+        // Filtrujemy mapy tooltipów, żeby nie wywalały błędu na pustych obszarach
+        const mapSTH_P = new Map(sthPrice.filter(p => p.value !== undefined).map(p => [p.time, p.value]));
+        const mapLTH_P = new Map(lthPrice.filter(p => p.value !== undefined).map(p => [p.time, p.value]));
+        const mapSTH_S = new Map(sthSopr.filter(p => p.value !== undefined).map(p => [p.time, p.value]));
+        const mapLTH_S = new Map(lthSopr.filter(p => p.value !== undefined).map(p => [p.time, p.value]));
 
         const handleCrosshairMove = (param) => {
             if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) { toolTip.style.display = 'none'; return; }
