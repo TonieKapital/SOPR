@@ -55,10 +55,18 @@ function setupModals() {
 async function init() {
     setupModals();
     try {
-        const [seriesBTC, sthPriceRaw, lthPriceRaw, sthSopr, lthSopr] = await Promise.all([
+        const [rawBTC, sthPriceRaw, lthPriceRaw, sthSopr, lthSopr] = await Promise.all([
             fetchBitstampData(), loadLocalJson('sth-realised-price.json'), loadLocalJson('lth-realised-price.json'),
             loadLocalJson('sth-sopr.json'), loadLocalJson('lth-sopr.json')
         ]);
+
+        // KLUCZOWE ROZWIĄZANIE: Szukamy daty, w której zaczynają się dane On-Chain
+        const firstDataPoint = Math.min(
+            sthPriceRaw[0].time, lthPriceRaw[0].time, sthSopr[0].time, lthSopr[0].time
+        );
+        
+        // Obcinamy historię BTC tak, aby zaczynała się dokładnie od tego samego dnia
+        const seriesBTC = rawBTC.filter(candle => candle.time >= firstDataPoint);
 
         const btcMap = new Map(seriesBTC.map(c => [c.time, c.close]));
 
@@ -113,10 +121,6 @@ async function init() {
             leftPriceScale: { visible: false }, timeScale: { borderVisible: false, timeVisible: true },
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
         });
-
-        // KLUCZOWY FIX: Niewidzialna seria z samymi datami, która tworzy taką samą oś czasu jak wykres BTC
-        const timeSyncSeries = chartSopr.addLineSeries({ visible: false, crosshairMarkerVisible: false });
-        timeSyncSeries.setData(seriesBTC.map(c => ({ time: c.time }))); 
 
         const lineSTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false });
         lineSTH_S.setData(sthSopr); 
@@ -235,19 +239,4 @@ async function init() {
             setTimeout(updateChartBackground, 50);
         });
 
-        let isCandleMode = false;
-        document.getElementById('toggle-candle').addEventListener('click', function() {
-            isCandleMode = !isCandleMode; this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
-            if (btnBtc.classList.contains('active')) { lineBTC.applyOptions({ visible: !isCandleMode }); candleBTC.applyOptions({ visible: isCandleMode }); }
-        });
-
-        document.getElementById('toggle-zones').addEventListener('click', function() { zoneSeries.applyOptions({ visible: this.classList.toggle('active') }); });
-        document.getElementById('toggle-log').addEventListener('click', function() {
-            const log = this.classList.toggle('active');
-            chartMain.applyOptions({ rightPriceScale: { mode: log ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal } });
-            setTimeout(updateChartBackground, 50);
-        });
-
-    } catch (err) { console.error("Krytyczny błąd UI:", err); }
-}
-window.addEventListener('DOMContentLoaded', init);
+        let isCandle
