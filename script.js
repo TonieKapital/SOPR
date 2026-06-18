@@ -154,7 +154,15 @@ async function init() {
 
         new ResizeObserver(() => { requestAnimationFrame(updateChartBackground); }).observe(containerSopr);
 
-        chartMain.timeScale().fitContent();
+        // --- ZMIANA: Usunięcie blokady wykresu i dodanie swobodnego przewijania ---
+        const totalPoints = seriesBTC.length;
+        if (totalPoints > 365) {
+            chartMain.timeScale().setVisibleLogicalRange({
+                from: totalPoints - 365,
+                to: totalPoints + 40
+            });
+        }
+        
         setTimeout(updateChartBackground, 150); // Bezpieczny rozruch po załadowaniu skali osi
 
         // --- INTERAKTYWNY TOOLTIP SONDY ---
