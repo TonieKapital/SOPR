@@ -60,20 +60,6 @@ async function init() {
             loadLocalJson('sth-sopr.json'), loadLocalJson('lth-sopr.json')
         ]);
 
-        // KLUCZOWA ZMIANA: Wyrównanie lewej krawędzi danych On-Chain z danymi BTC (blokuje buga przy cofaniu)
-        const btcStart = seriesBTC[0].time;
-        const alignData = (arr) => {
-            if (arr.length > 0 && arr[0].time > btcStart) {
-                return [{ time: btcStart }, ...arr];
-            }
-            return arr;
-        };
-
-        const sthPriceAligned = alignData(sthPriceRaw);
-        const lthPriceAligned = alignData(lthPriceRaw);
-        const sthSoprAligned = alignData(sthSopr);
-        const lthSoprAligned = alignData(lthSopr);
-
         const btcMap = new Map(seriesBTC.map(c => [c.time, c.close]));
 
         const formatUSD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -91,7 +77,7 @@ async function init() {
         document.getElementById('controls-bar').style.display = 'flex';
         document.getElementById('chart-wrapper').style.display = 'flex';
 
-        // --- WYKRES MAIN ---
+        // --- WYKRES 1: WYKRES GŁÓWNY (CENA) ---
         const containerMain = document.getElementById('chart-main');
         const chartMain = LightweightCharts.createChart(containerMain, {
             autoSize: true,
@@ -108,16 +94,16 @@ async function init() {
         candleBTC.setData(seriesBTC);
 
         const lineSTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-        lineSTH_P.setData(sthPriceAligned); // Używamy wyrównanych danych
+        lineSTH_P.setData(sthPriceRaw); 
         const lineLTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-        lineLTH_P.setData(lthPriceAligned); // Używamy wyrównanych danych
+        lineLTH_P.setData(lthPriceRaw); 
 
         const zoneSeries = chartMain.addHistogramSeries({ priceScaleId: 'zones', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
         chartMain.priceScale('zones').applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
         zoneSeries.setData(seriesBTC.map(pt => ({ time: pt.time, value: 1, color: getZoneColor(pt.time) })));
         zoneSeries.applyOptions({ visible: false });
 
-        // --- WYKRES SOPR ---
+        // --- WYKRES 2: OSCYLATOR SOPR ---
         const containerSopr = document.getElementById('chart-sopr');
         const chartSopr = LightweightCharts.createChart(containerSopr, {
             autoSize: true,
@@ -128,15 +114,20 @@ async function init() {
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
         });
 
+        // KLUCZOWY FIX: Niewidzialna seria z samymi datami, która tworzy taką samą oś czasu jak wykres BTC
+        const timeSyncSeries = chartSopr.addLineSeries({ visible: false, crosshairMarkerVisible: false });
+        timeSyncSeries.setData(seriesBTC.map(c => ({ time: c.time }))); 
+
         const lineSTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false });
-        lineSTH_S.setData(sthSoprAligned); // Używamy wyrównanych danych
+        lineSTH_S.setData(sthSopr); 
         const lineLTH_S = chartSopr.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: true });
-        lineLTH_S.setData(lthSoprAligned); // Używamy wyrównanych danych
+        lineLTH_S.setData(lthSopr); 
 
         const priceLineConfig = { price: 1.0, color: 'rgba(255, 255, 255, 0.25)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '' };
         lineSTH_S.createPriceLine(priceLineConfig);
         lineLTH_S.createPriceLine(priceLineConfig);
 
+        // SYSTEM HORIZONALNEGO DZIELENIA TŁA
         function updateChartBackground() {
             const activeSeries = lineLTH_S.options().visible ? lineLTH_S : lineSTH_S;
             const coordinate = activeSeries.priceToCoordinate(1.0);
@@ -146,6 +137,7 @@ async function init() {
             containerSopr.style.background = `linear-gradient(to bottom, rgba(42, 239, 24, 0.04) 0%, rgba(42, 239, 24, 0.04) ${percentage}%, rgba(255, 59, 48, 0.05) ${percentage}%, rgba(255, 59, 48, 0.05) 100%)`;
         }
 
+        // --- SYNCHRONIZACJA OSI ---
         let isSyncing = false;
         chartMain.timeScale().subscribeVisibleTimeRangeChange(range => {
             if (isSyncing || !range) return; isSyncing = true;
@@ -160,6 +152,7 @@ async function init() {
 
         new ResizeObserver(() => { requestAnimationFrame(updateChartBackground); }).observe(containerSopr);
 
+        // Ustawienie domyślnego widoku z zapasem po prawej
         const totalPoints = seriesBTC.length;
         if (totalPoints > 365) {
             chartMain.timeScale().setVisibleLogicalRange({
@@ -172,7 +165,6 @@ async function init() {
 
         // --- TOOLTIP ---
         const toolTip = document.getElementById('tv-tooltip');
-        // Do tooltipów używamy danych Raw (bez pustych wstrzykniętych punktów)
         const mapSTH_P = new Map(sthPriceRaw.map(p => [p.time, p.value]));
         const mapLTH_P = new Map(lthPriceRaw.map(p => [p.time, p.value]));
         const mapSTH_S = new Map(sthSopr.map(p => [p.time, p.value]));
