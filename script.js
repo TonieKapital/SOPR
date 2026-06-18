@@ -1,91 +1,275 @@
-<!DOCTYPE html>
-<html lang="pl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>STH & LTH Market Dashboard by Tonie Kapital</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./style.css">
-    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
-    <style>
-        /* Stałe podświetlenia tożsamościowe z dołu dla kafelków */
-        #card-sth { border-bottom: 2px solid #ff5722 !important; cursor: pointer; transition: 0.2s; }
-        #card-sth:hover { background: rgba(255, 87, 34, 0.05); transform: translateY(-2px); }
+// --- JEDNOLITA PALETA KOLORÓW TOŻSAMOŚCIOWYCH ---
+const COLORS = {
+    btc: '#ffffff',
+    sth: '#ff5722',         
+    lth: '#00d2ff',         
+    text_profit: '#2aef18', 
+    text_loss: '#ff3b30'    
+};
 
-        #card-lth { border-bottom: 2px solid #00d2ff !important; cursor: pointer; transition: 0.2s; }
-        #card-lth:hover { background: rgba(0, 210, 255, 0.05); transform: translateY(-2px); }
+const ZONES = {
+    h1: Date.UTC(2012, 10, 28) / 1000, c1e: Date.UTC(2013, 10, 30) / 1000,
+    c1b: Date.UTC(2015, 0, 14) / 1000, c2e: Date.UTC(2017, 11, 17) / 1000,
+    c2b: Date.UTC(2018, 11, 16) / 1000, c3e: Date.UTC(2021, 10, 10) / 1000,
+    c3b: Date.UTC(2022, 10, 21) / 1000, h4: Date.UTC(2024, 3, 20) / 1000,
+    koniecZielonej: Date.UTC(2025, 9, 6) / 1000, koniecCzerwonej: Date.UTC(2026, 9, 6) / 1000 
+};
+
+function getZoneColor(t) {
+    if ((t >= ZONES.h1 && t < ZONES.c1e) || (t >= ZONES.c1b && t < ZONES.c2e) || (t >= ZONES.c2b && t < ZONES.c3e) || (t >= ZONES.c3b && t < ZONES.koniecZielonej) || (t >= ZONES.koniecCzerwonej)) return 'rgba(42, 239, 24, 0.04)';
+    return 'rgba(238, 23, 23, 0.05)';
+}
+
+async function fetchBitstampData() {
+    let currentStartUnix = 1313625600; 
+    let isFetching = true;
+    const btcMapDedupe = new Map();
+
+    while (isFetching) {
+        if (currentStartUnix > Math.floor(Date.now() / 1000)) break;
+        const response = await fetch(`https://www.bitstamp.net/api/v2/ohlc/btcusd/?step=86400&limit=1000&start=${currentStartUnix}`);
+        const json = await response.json();
         
-        /* Modale informacyjne */
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); backdrop-filter: blur(4px); align-items: center; justify-content: center; }
-        .modal-content { background: #1c1c1e; padding: 30px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.08); max-width: 450px; width: 90%; color: #fff; position: relative; }
-        .close-btn { position: absolute; right: 15px; top: 10px; font-size: 28px; cursor: pointer; color: #8e8e93; }
-        .close-btn:hover { color: #fff; }
-        .modal-content h3 { margin-top: 0; font-size: 20px;}
-        .modal-content p { color: #d1d1d6; line-height: 1.6; font-size: 15px; margin-bottom: 12px; }
-    </style>
-</head>
-<body>
-    <div class="dashboard">
-        <header class="glass-header">
-            <div class="stats-grid" style="grid-template-columns: repeat(3, 1fr); max-width: 900px; margin: 0 auto;">
-                <div class="stat-card stat-btc">
-                    <span class="stat-label">CENA BTC (Bitstamp)</span>
-                    <span class="stat-value" id="val-btc">Ładowanie...</span>
-                </div>
-                <div class="stat-card stat-sth" id="card-sth" title="Zobacz wyjaśnienie">
-                    <span class="stat-label">STH REALISED PRICE</span>
-                    <span class="stat-value" id="val-sth">Ładowanie...</span>
-                </div>
-                <div class="stat-card stat-lth" id="card-lth" title="Zobacz wyjaśnienie">
-                    <span class="stat-label">LTH REALISED PRICE</span>
-                    <span class="stat-value" id="val-lth">Ładowanie...</span>
-                </div>
-            </div>
-        </header>
+        if (!json.data || !json.data.ohlc || json.data.ohlc.length === 0) break;
         
-        <div id="loading" class="loading-state">
-            <div class="spinner"></div> Pobieranie pełnej historii On-Chain oraz danych giełdowych...
-        </div>
+        const candles = json.data.ohlc;
+        for (let i = 0; i < candles.length; i++) {
+            let d = new Date(parseInt(candles[i].timestamp) * 1000);
+            let utcMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000;
+            btcMapDedupe.set(utcMidnight, { time: utcMidnight, open: parseFloat(candles[i].open), high: parseFloat(candles[i].high), low: parseFloat(candles[i].low), close: parseFloat(candles[i].close) });
+        }
+        currentStartUnix = parseInt(candles[candles.length - 1].timestamp) + 86400;
+        if (candles.length < 1000) isFetching = false;
+    }
+    return Array.from(btcMapDedupe.values()).sort((a, b) => a.time - b.time);
+}
+
+async function loadLocalJson(file) {
+    const r = await fetch(`./data/${file}`);
+    const j = await r.json();
+    return j.map(i => {
+        let d = new Date(i.date + 'T00:00:00Z');
+        let t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000;
+        return { time: t, value: i.value };
+    }).sort((a,b) => a.time - b.time);
+}
+
+function alignToBtcTimeline(rawData, btcSeries) {
+    const dataMap = new Map(rawData.map(p => [p.time, p.value]));
+    const aligned = [];
+    let lastVal = null;
+    for (const btc of btcSeries) {
+        if (dataMap.has(btc.time)) {
+            lastVal = dataMap.get(btc.time);
+            aligned.push({ time: btc.time, value: lastVal });
+        } else if (lastVal !== null) {
+            aligned.push({ time: btc.time, value: lastVal });
+        }
+    }
+    return aligned;
+}
+
+function setupModals() {
+    const sM = document.getElementById('sth-modal'); const lM = document.getElementById('lth-modal');
+    document.getElementById('card-sth').addEventListener('click', () => sM.style.display = 'flex');
+    document.getElementById('card-lth').addEventListener('click', () => lM.style.display = 'flex');
+    document.getElementById('close-sth-modal').addEventListener('click', () => sM.style.display = 'none');
+    document.getElementById('close-lth-modal').addEventListener('click', () => lM.style.display = 'none');
+    window.addEventListener('click', (e) => { if(e.target===sM) sM.style.display='none'; if(e.target===lM) lM.style.display='none'; });
+}
+
+async function init() {
+    setupModals();
+    try {
+        const [seriesBTC, sthPriceRaw, lthPriceRaw, sthSoprRaw, lthSoprRaw] = await Promise.all([
+            fetchBitstampData(), loadLocalJson('sth-realised-price.json'), loadLocalJson('lth-realised-price.json'),
+            loadLocalJson('sth-sopr.json'), loadLocalJson('lth-sopr.json')
+        ]);
+
+        const sthPrice = alignToBtcTimeline(sthPriceRaw, seriesBTC);
+        const lthPrice = alignToBtcTimeline(lthPriceRaw, seriesBTC);
+        const sthSopr = alignToBtcTimeline(sthSoprRaw, seriesBTC);
+        const lthSopr = alignToBtcTimeline(lthSoprRaw, seriesBTC);
+
+        const btcMap = new Map(seriesBTC.map(c => [c.time, c.close]));
+        const formatUSD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+        const latestBTC = seriesBTC[seriesBTC.length - 1].close;
+        const latestSTH = sthPrice[sthPrice.length - 1].value;
+        const latestLTH = lthPrice[lthPrice.length - 1].value;
+
+        document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
+        document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
+        document.getElementById('val-sth').style.color = latestSTH < latestBTC ? COLORS.text_profit : COLORS.text_loss;
+        document.getElementById('val-lth').innerText = formatUSD.format(latestLTH);
+        document.getElementById('val-lth').style.color = latestLTH < latestBTC ? COLORS.text_profit : COLORS.text_loss;
+
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('controls-bar').style.display = 'flex';
+        document.getElementById('chart-wrapper').style.display = 'flex';
+
+        const containerMain = document.getElementById('chart-main');
         
-        <div class="timeframe-selector" style="display: none;" id="controls-bar">
-            <button class="tf-btn" id="toggle-candle">Wykres: Świece</button>
-            <button class="tf-btn" id="toggle-log">Skala BTC: Log</button>
-            <button class="tf-btn" id="toggle-zones">Nałóż cykl</button>
-            <span style="width: 1px; height: 16px; background: rgba(255,255,255,0.1); margin: 0 4px; align-self: center;"></span>
-            <button class="tf-btn active price-toggle" data-series="btc">Cena BTC</button>
-            <button class="tf-btn active price-toggle" data-series="sth">STH Price</button>
-            <button class="tf-btn active price-toggle" data-series="lth">LTH Price</button>
-            <span style="width: 1px; height: 16px; background: rgba(255,255,255,0.1); margin: 0 4px; align-self: center;"></span>
-            <button class="tf-btn sopr-radio" id="btn-sth-sopr" data-series="sth-sopr">STH SOPR</button>
-            <button class="tf-btn active sopr-radio" id="btn-lth-sopr" data-series="lth-sopr">LTH SOPR</button>
-        </div>
+        // --- JEDEN WSPÓLNY WYKRES ---
+        const chartMain = LightweightCharts.createChart(containerMain, {
+            autoSize: true,
+            layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#8e8e93', fontFamily: 'Inter, sans-serif' },
+            grid: { vertLines: { color: 'rgba(255, 255, 255, 0.03)' }, horzLines: { color: 'rgba(255, 255, 255, 0.03)' } },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+            timeScale: { borderVisible: false },
+            rightPriceScale: {
+                borderVisible: false,
+                scaleMargins: { top: 0.05, bottom: 0.40 } // Cena BTC u góry
+            },
+            leftPriceScale: {
+                visible: true,
+                borderVisible: false,
+                scaleMargins: { top: 0.65, bottom: 0.02 } // SOPR na dole
+            }
+        });
 
-        <div id="chart-wrapper" style="display: none;">
-            <div id="chart-main"></div>
-            <div id="tv-tooltip"></div>
-        </div>
-    </div>
+        // 🟢 SERIE GÓRNE (Prawa Oś - BTC i Realised Price)
+        const lineBTC = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.btc, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        lineBTC.setData(seriesBTC.map(c => ({ time: c.time, value: c.close })));
+        
+        const candleBTC = chartMain.addCandlestickSeries({ priceScaleId: 'right', upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', visible: false });
+        candleBTC.setData(seriesBTC);
 
-    <div id="sth-modal" class="modal">
-        <div class="modal-content">
-            <span class="close-btn" id="close-sth-modal">&times;</span>
-            <h3 style="color: #ff5722;">STH Realised Price</h3>
-            <p><strong>To średnia cena zakupu krótkoterminowych inwestorów.</strong></p>
-            <p>Wskaźnik ten oblicza średnią cenę po jakiej zostały zakupione Bitcoiny, które nie leżą w portfelach dłużej niż 155 dni.</p>
-            <p>Gdy obecna cena Bitcoina znajduje się <strong>powyżej</strong> tej linii – oznacza to, że są w zysku. Gdy cena spada <strong>poniżej</strong> linii – oznacza to, że są na stracie.</p>
-        </div>
-    </div>
+        const lineSTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        lineSTH_P.setData(sthPrice); 
+        
+        const lineLTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        lineLTH_P.setData(lthPrice); 
 
-    <div id="lth-modal" class="modal">
-        <div class="modal-content">
-            <span class="close-btn" id="close-lth-modal">&times;</span>
-            <h3 style="color: #00d2ff;">LTH Realised Price</h3>
-            <p><strong>To średnia cena zakupu długoterminowych inwestorów.</strong></p>
-            <p>Wskaźnik ten oblicza średnią cenę po jakiej zostały zakupione Bitcoiny, które leżą w portfelach dłużej niż 155 dni.</p>
-            <p>Gdy obecna cena Bitcoina znajduje się <strong>powyżej</strong> tej linii – oznacza to, że są w zysku. Gdy cena spada <strong>poniżej</strong> linii – oznacza to, że są na stracie.</p>
-        </div>
-    </div>
+        const zoneSeries = chartMain.addHistogramSeries({ priceScaleId: 'zones', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        chartMain.priceScale('zones').applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
+        zoneSeries.setData(seriesBTC.map(pt => ({ time: pt.time, value: 1, color: getZoneColor(pt.time) })));
+        zoneSeries.applyOptions({ visible: false });
 
-    <script src="./script.js"></script>
-</body>
-</html>
+        // 🔴 SERIE DOLNE (Lewa Oś - SOPR Oscylatory)
+        const lineSTH_S = chartMain.addLineSeries({ priceScaleId: 'left', color: COLORS.sth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false });
+        lineSTH_S.setData(sthSopr); 
+        
+        const lineLTH_S = chartMain.addLineSeries({ priceScaleId: 'left', color: COLORS.lth, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: true });
+        lineLTH_S.setData(lthSopr); 
+
+        const priceLineConfig = { price: 1.0, color: 'rgba(255, 255, 255, 0.25)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '' };
+        lineSTH_S.createPriceLine(priceLineConfig);
+        lineLTH_S.createPriceLine(priceLineConfig);
+
+        // SYSTEM HORIZONALNEGO DZIELENIA TŁA (Tylko dla dolnej strefy 35%!)
+        function updateChartBackground() {
+            const activeSeries = lineLTH_S.options().visible ? lineLTH_S : lineSTH_S;
+            const coordinate = activeSeries.priceToCoordinate(1.0);
+            if (coordinate === null) return;
+            const containerHeight = containerMain.clientHeight;
+            const percentage = (coordinate / containerHeight) * 100;
+            
+            containerMain.style.background = `linear-gradient(to bottom, 
+                transparent 0%, 
+                transparent 64%, 
+                rgba(42, 239, 24, 0.04) 65%, 
+                rgba(42, 239, 24, 0.04) ${percentage}%, 
+                rgba(255, 59, 48, 0.05) ${percentage}%, 
+                rgba(255, 59, 48, 0.05) 100%)`;
+        }
+
+        chartMain.timeScale().subscribeVisibleTimeRangeChange(() => {
+            requestAnimationFrame(updateChartBackground);
+        });
+        new ResizeObserver(() => { requestAnimationFrame(updateChartBackground); }).observe(containerMain);
+
+        const totalPoints = seriesBTC.length;
+        if (totalPoints > 365) {
+            chartMain.timeScale().setVisibleLogicalRange({
+                from: totalPoints - 365,
+                to: totalPoints + 40
+            });
+        }
+
+        setTimeout(updateChartBackground, 150);
+
+        // --- TOOLTIP ---
+        const toolTip = document.getElementById('tv-tooltip');
+        const mapSTH_P = new Map(sthPrice.map(p => [p.time, p.value]));
+        const mapLTH_P = new Map(lthPrice.map(p => [p.time, p.value]));
+        const mapSTH_S = new Map(sthSopr.map(p => [p.time, p.value]));
+        const mapLTH_S = new Map(lthSopr.map(p => [p.time, p.value]));
+
+        chartMain.subscribeCrosshairMove((param) => {
+            if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) { toolTip.style.display = 'none'; return; }
+            const t = param.time; const d = new Date(t * 1000);
+            let html = `<div class="tooltip-date">${d.getUTCDate()}.${(d.getUTCMonth()+1).toString().padStart(2,'0')}.${d.getUTCFullYear()}</div>`;
+            let show = false;
+
+            if (btcMap.has(t) && (lineBTC.options().visible || candleBTC.options().visible)) {
+                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.btc};"></span>Cena BTC</span><span class="tooltip-value">${formatUSD.format(btcMap.get(t))}</span></div>`;
+                show = true;
+            }
+            if (lineSTH_P.options().visible && mapSTH_P.has(t) && btcMap.has(t)) {
+                const val = mapSTH_P.get(t); const isProfit = val < btcMap.get(t);
+                const stateText = isProfit ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.sth};"></span>STH Price ${stateText}</span><span class="tooltip-value">${formatUSD.format(val)}</span></div>`;
+                show = true;
+            }
+            if (lineLTH_P.options().visible && mapLTH_P.has(t) && btcMap.has(t)) {
+                const val = mapLTH_P.get(t); const isProfit = val < btcMap.get(t);
+                const stateText = isProfit ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row"><span><span class="tooltip-color-dot" style="background:${COLORS.lth};"></span>LTH Price ${stateText}</span><span class="tooltip-value">${formatUSD.format(val)}</span></div>`;
+                show = true;
+            }
+            if (lineSTH_S.options().visible && mapSTH_S.has(t)) {
+                const val = mapSTH_S.get(t);
+                const stateText = val > 1.0 ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row" style="margin-top:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span><span class="tooltip-color-dot" style="background:${COLORS.sth};"></span>STH SOPR ${stateText}</span><span class="tooltip-value">${val.toFixed(4)}</span></div>`;
+                show = true;
+            }
+            if (lineLTH_S.options().visible && mapLTH_S.has(t)) {
+                const val = mapLTH_S.get(t);
+                const stateText = val > 1.0 ? `<span style="color:${COLORS.text_profit}; font-size:11px;">(Zysk)</span>` : `<span style="color:${COLORS.text_loss}; font-size:11px;">(Strata)</span>`;
+                html += `<div class="tooltip-row" style="margin-top:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span><span class="tooltip-color-dot" style="background:${COLORS.lth};"></span>LTH SOPR ${stateText}</span><span class="tooltip-value">${val.toFixed(4)}</span></div>`;
+                show = true;
+            }
+
+            if (!show) { toolTip.style.display = 'none'; return; }
+            toolTip.innerHTML = html; toolTip.style.display = 'block';
+            let x = param.point.x + 20; if (x + toolTip.offsetWidth > containerMain.clientWidth - 20) x = param.point.x - toolTip.offsetWidth - 20;
+            toolTip.style.left = x + 'px'; toolTip.style.top = (containerMain.getBoundingClientRect().top + window.scrollY + 50) + 'px';
+        });
+
+        const btnBtc = document.querySelector('[data-series="btc"]');
+        btnBtc.addEventListener('click', function() {
+            const act = this.classList.toggle('active');
+            if (isCandleMode) candleBTC.applyOptions({ visible: act }); else lineBTC.applyOptions({ visible: act });
+        });
+
+        document.querySelector('[data-series="sth"]').addEventListener('click', function() { lineSTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
+        document.querySelector('[data-series="lth"]').addEventListener('click', function() { lineLTH_P.applyOptions({ visible: this.classList.toggle('active') }); });
+        
+        document.getElementById('btn-sth-sopr').addEventListener('click', function() {
+            this.classList.add('active'); document.getElementById('btn-lth-sopr').classList.remove('active');
+            lineSTH_S.applyOptions({ visible: true }); lineLTH_S.applyOptions({ visible: false });
+            setTimeout(updateChartBackground, 50);
+        });
+
+        document.getElementById('btn-lth-sopr').addEventListener('click', function() {
+            this.classList.add('active'); document.getElementById('btn-sth-sopr').classList.remove('active');
+            lineLTH_S.applyOptions({ visible: true }); lineSTH_S.applyOptions({ visible: false });
+            setTimeout(updateChartBackground, 50);
+        });
+
+        let isCandleMode = false;
+        document.getElementById('toggle-candle').addEventListener('click', function() {
+            isCandleMode = !isCandleMode; this.innerText = isCandleMode ? 'Wykres: Linia' : 'Wykres: Świece';
+            if (btnBtc.classList.contains('active')) { lineBTC.applyOptions({ visible: !isCandleMode }); candleBTC.applyOptions({ visible: isCandleMode }); }
+        });
+
+        document.getElementById('toggle-zones').addEventListener('click', function() { zoneSeries.applyOptions({ visible: this.classList.toggle('active') }); });
+        document.getElementById('toggle-log').addEventListener('click', function() {
+            const log = this.classList.toggle('active');
+            chartMain.applyOptions({ rightPriceScale: { mode: log ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal } });
+            setTimeout(updateChartBackground, 50);
+        });
+
+    } catch (err) { console.error("Krytyczny błąd UI:", err); }
+}
+window.addEventListener('DOMContentLoaded', init);
