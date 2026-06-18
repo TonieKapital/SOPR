@@ -55,25 +55,26 @@ function setupModals() {
 async function init() {
     setupModals();
     try {
-        const [rawBTC, sthPriceRaw, lthPriceRaw, sthSopr, lthSopr] = await Promise.all([
+        const [seriesBTC, sthPriceRaw, lthPriceRaw, sthSoprRaw, lthSoprRaw] = await Promise.all([
             fetchBitstampData(), loadLocalJson('sth-realised-price.json'), loadLocalJson('lth-realised-price.json'),
             loadLocalJson('sth-sopr.json'), loadLocalJson('lth-sopr.json')
         ]);
 
-        // KLUCZOWE ROZWIĄZANIE: Szukamy daty, w której zaczynają się dane On-Chain
-        const firstDataPoint = Math.min(
-            sthPriceRaw[0].time, lthPriceRaw[0].time, sthSopr[0].time, lthSopr[0].time
-        );
-        
-        // Obcinamy historię BTC tak, aby zaczynała się dokładnie od tego samego dnia
-        const seriesBTC = rawBTC.filter(candle => candle.time >= firstDataPoint);
+        // KLUCZOWA ZMIANA: Pobieramy datę startu Bitcoina
+        const btcStartTime = seriesBTC[0].time;
+
+        // Odrzucamy wszystkie dane On-Chain, które są starsze niż pierwszy dzień z danymi BTC
+        const sthPrice = sthPriceRaw.filter(p => p.time >= btcStartTime);
+        const lthPrice = lthPriceRaw.filter(p => p.time >= btcStartTime);
+        const sthSopr = sthSoprRaw.filter(p => p.time >= btcStartTime);
+        const lthSopr = lthSoprRaw.filter(p => p.time >= btcStartTime);
 
         const btcMap = new Map(seriesBTC.map(c => [c.time, c.close]));
 
         const formatUSD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
         const latestBTC = seriesBTC[seriesBTC.length - 1].close;
-        const latestSTH = sthPriceRaw[sthPriceRaw.length - 1].value;
-        const latestLTH = lthPriceRaw[lthPriceRaw.length - 1].value;
+        const latestSTH = sthPrice[sthPrice.length - 1].value;
+        const latestLTH = lthPrice[lthPrice.length - 1].value;
 
         document.getElementById('val-btc').innerText = formatUSD.format(latestBTC);
         document.getElementById('val-sth').innerText = formatUSD.format(latestSTH);
@@ -102,9 +103,9 @@ async function init() {
         candleBTC.setData(seriesBTC);
 
         const lineSTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.sth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-        lineSTH_P.setData(sthPriceRaw); 
+        lineSTH_P.setData(sthPrice); 
         const lineLTH_P = chartMain.addLineSeries({ priceScaleId: 'right', color: COLORS.lth, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-        lineLTH_P.setData(lthPriceRaw); 
+        lineLTH_P.setData(lthPrice); 
 
         const zoneSeries = chartMain.addHistogramSeries({ priceScaleId: 'zones', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
         chartMain.priceScale('zones').applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
@@ -169,8 +170,8 @@ async function init() {
 
         // --- TOOLTIP ---
         const toolTip = document.getElementById('tv-tooltip');
-        const mapSTH_P = new Map(sthPriceRaw.map(p => [p.time, p.value]));
-        const mapLTH_P = new Map(lthPriceRaw.map(p => [p.time, p.value]));
+        const mapSTH_P = new Map(sthPrice.map(p => [p.time, p.value]));
+        const mapLTH_P = new Map(lthPrice.map(p => [p.time, p.value]));
         const mapSTH_S = new Map(sthSopr.map(p => [p.time, p.value]));
         const mapLTH_S = new Map(lthSopr.map(p => [p.time, p.value]));
 
